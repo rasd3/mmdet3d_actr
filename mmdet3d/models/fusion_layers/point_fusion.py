@@ -7,6 +7,7 @@ from torch.nn import functional as F
 
 from mmdet3d.core.bbox.structures import (get_proj_mat_by_coord_type,
                                           points_cam2img)
+from mmdet3d.models.model_utils.actr import build as build_actr
 from ..builder import FUSION_LAYERS
 from . import apply_3d_transformation
 
@@ -51,7 +52,6 @@ def point_sample(img_meta,
     Returns:
         torch.Tensor: NxC image features sampled by point coordinates.
     """
-
     # apply transformation based on info in img_meta
     points = apply_3d_transformation(
         points, coord_type, img_meta, reverse=True)
@@ -304,3 +304,100 @@ class PointFusion(BaseModule):
             align_corners=self.align_corners,
         )
         return img_pts
+
+
+@FUSION_LAYERS.register_module()
+class ACTR(BaseModule):
+
+    def __init__(self, actr_cfg, init_cfg=None, coord_type='LIDAR'):
+        super(ACTR, self).__init__(init_cfg=init_cfg)
+        self.fusion_method = actr_cfg['fusion_method']
+        self.actr = build_actr(actr_cfg)
+        self.coord_type = coord_type
+
+    def get_2d_coor(self, img_meta, points, proj_mat, coord_type,
+                    img_scale_factor, img_crop_offset, img_flip, img_pad_shape,
+                    img_shape):
+        # apply transformation based on info in img_meta
+        points = apply_3d_transformation(
+            points, coord_type, img_meta, reverse=True)
+
+        # project points to camera coordinate
+        pts_2d = points_cam2img(points, proj_mat)
+
+        # img transformation: scale -> crop -> flip
+        # the image is resized by img_scale_factor
+        img_coors = pts_2d[:, 0:2] * img_scale_factor  # Nx2
+        img_coors -= img_crop_offset
+
+        # grid sample, the valid grid range should be in [-1,1]
+        coor_x, coor_y = torch.split(img_coors, 1, dim=1)  # each is Nx1
+
+        if img_flip:
+            # by default we take it as horizontal flip
+            # use img_shape before padding for flip
+            orig_h, orig_w = img_shape
+            coor_x = orig_w - coor_x
+
+        h, w = img_pad_shape
+        coor_y = coor_y / h
+        coor_x = coor_x / w
+        grid = torch.cat([coor_x, coor_y], dim=1)  # Nx2 -> 1x1xNx2
+        return grid
+
+    def forward(self, img_feats, pts, pts_feats, img_metas):
+        """Forward function.
+
+        Args:
+            img_feats (list[torch.Tensor]): Image features.
+            pts: [list[torch.Tensor]]: A batch of points with shape N x 3.
+            pts_feats (torch.Tensor): A tensor consist of point features of the
+                total batch.
+            img_metas (list[dict]): Meta information of images.
+        Returns:
+            torch.Tensor: Fused features of each point.
+        """
+        batch_size = len(pts)
+        num_points = [i.shape[0] for i in pts]
+        pts_feats_b = torch.zeros(
+            (batch_size, self.actr.max_num_ne_voxel, pts_feats.shape[1]),
+            device=pts_feats.device)
+        coor_2d_b = torch.zeros((batch_size, self.actr.max_num_ne_voxel, 2),
+                                device=pts_feats.device)
+        pts_b = torch.zeros((batch_size, self.actr.max_num_ne_voxel, 3),
+                            device=pts_feats.device)
+
+        for b in range(batch_size):
+            img_meta = img_metas[b]
+            img_scale_factor = (
+                pts[b].new_tensor(img_meta['scale_factor'][:2])
+                if 'scale_factor' in img_meta.keys() else 1)
+            img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
+            img_crop_offset = (
+                pts[b].new_tensor(img_meta['img_crop_offset'])
+                if 'img_crop_offset' in img_meta.keys() else 0)
+            proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
+            coor_2d = self.get_2d_coor(
+                img_meta=img_meta,
+                points=pts[b][:, :3],
+                coord_type=self.coord_type,
+                proj_mat=pts[b].new_tensor(proj_mat),
+                img_scale_factor=img_scale_factor,
+                img_crop_offset=img_crop_offset,
+                img_flip=img_flip,
+                img_pad_shape=img_meta['input_shape'][:2],
+                img_shape=img_meta['img_shape'][:2])
+            pts_b[b, :pts[b].shape[0]] = pts[b][:, :3]
+            coor_2d_b[b, :pts[b].shape[0]] = coor_2d
+            pts_feats_b[b, :pts[b].shape[0]] = pts_feats[b]
+            abcd = 1
+
+        enh_feat = self.actr(
+            v_feat=pts_feats_b,
+            grid=coor_2d_b,
+            i_feats=img_feats,
+            lidar_grid=pts_b,
+        )
+        enh_feat_cat = torch.cat(
+            [f[:np] for f, np in zip(enh_feat, num_points)])
+        return enh_feat_cat
