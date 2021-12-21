@@ -564,6 +564,41 @@ def rbbox2d_to_near_bbox(rbboxes):
     bboxes = center_to_minmax_2d(bboxes_center[:, :2], bboxes_center[:, 2:])
     return bboxes
 
+@numba.jit(nopython=True)
+def overlap_jit(boxes, mode='iou', eps=0.0):
+    """Calculate box iou. Note that jit version runs ~10x faster than the
+    box_overlaps function in mmdet3d.core.evaluation.
+
+    Note:
+        This function is for counterclockwise boxes.
+
+    Args:
+        boxes (np.ndarray): Input bounding boxes with shape of (N, 4).
+        query_boxes (np.ndarray): Query boxes with shape of (K, 4).
+        mode (str, optional): IoU mode. Defaults to 'iou'.
+        eps (float, optional): Value added to denominator. Defaults to 0.
+
+    Returns:
+        np.ndarray: Overlap between boxes and query_boxes
+            with the shape of [N, K].
+    """
+    N = boxes.shape[0]
+    overlaps = np.zeros((N, N), dtype=boxes.dtype)
+    for k in range(N):
+        box_area = ((boxes[k, 2] - boxes[k, 0] + eps) *
+                    (boxes[k, 3] - boxes[k, 1] + eps))
+        for n in range(N):
+            iw = (
+                min(boxes[n, 2], boxes[k, 2]) - max(boxes[n, 0], boxes[k, 0]) +
+                eps)
+            if iw > 0:
+                ih = (
+                    min(boxes[n, 3], boxes[k, 3]) -
+                    max(boxes[n, 1], boxes[k, 1]) + eps)
+                if ih > 0:
+                    overlaps[n, k] = iw * ih / box_area
+    return overlaps
+
 
 @numba.jit(nopython=True)
 def iou_jit(boxes, query_boxes, mode='iou', eps=0.0):
@@ -605,6 +640,21 @@ def iou_jit(boxes, query_boxes, mode='iou', eps=0.0):
                     overlaps[n, k] = iw * ih / ua
     return overlaps
 
+def mask_btw_2d_box(box1, box2):
+    box2[::2] -= box1[0]
+    box1[::2] -= box1[0]
+    box2[1::2] -= box1[1]
+    box1[1::2] -= box1[1]
+
+    ux, uy, dx, dy = 0, 0, 0, 0
+    ux = box2[0] if box1[0] < box2[0] else box1[0]
+    uy = box2[1] if box1[1] < box2[1] else box1[1]
+    dx = box1[2] if box1[2] < box2[2] else box2[2]
+    dy = box1[3] if box1[3] < box2[3] else box2[3]
+
+    mask = np.ones((int(box1[3] - box1[1]), int(box1[2] - box1[0])), dtype=np.bool)
+    mask[uy:dy, ux:dx] = False
+    return mask
 
 def projection_matrix_to_CRT_kitti(proj):
     """Split projection matrix of kitti.

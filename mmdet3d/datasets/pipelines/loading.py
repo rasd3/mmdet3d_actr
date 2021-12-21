@@ -501,6 +501,7 @@ class LoadAnnotations3D(LoadAnnotations):
                  with_mask=False,
                  with_seg=False,
                  with_bbox_depth=False,
+                 with_img_gt=False,
                  poly2mask=True,
                  seg_3d_dtype='int',
                  file_client_args=dict(backend='disk')):
@@ -517,6 +518,7 @@ class LoadAnnotations3D(LoadAnnotations):
         self.with_attr_label = with_attr_label
         self.with_mask_3d = with_mask_3d
         self.with_seg_3d = with_seg_3d
+        self.with_img_gt = with_img_gt
         self.seg_3d_dtype = seg_3d_dtype
 
     def _load_bboxes_3d(self, results):
@@ -567,6 +569,19 @@ class LoadAnnotations3D(LoadAnnotations):
             dict: The dict containing loaded label annotations.
         """
         results['attr_labels'] = results['ann_info']['attr_labels']
+        return results
+
+    def _load_img_gts(self, results):
+        """Private function to load label annotations.
+
+        Args:
+            results (dict): Result dict from :obj:`mmdet3d.CustomDataset`.
+
+        Returns:
+            dict: The dict containing loaded label annotations.
+        """
+        results['gt_bboxes_gtimg_path'] = results['ann_info']['gtimg_path']
+        results['gt_bboxes_gtimg_disc'] = results['ann_info']['gtimg_disc']
         return results
 
     def _load_masks_3d(self, results):
@@ -648,6 +663,8 @@ class LoadAnnotations3D(LoadAnnotations):
             results = self._load_masks_3d(results)
         if self.with_seg_3d:
             results = self._load_semantic_seg_3d(results)
+        if self.with_img_gt:
+            results = self._load_img_gts(results)
 
         return results
 

@@ -22,6 +22,7 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         out_dir (str): Output directory of the groundtruth database info.
     """
     kitti.create_kitti_info_file(root_path, info_prefix)
+    breakpoint()
     kitti.create_reduced_point_cloud(root_path, info_prefix)
 
     info_train_path = osp.join(root_path, f'{info_prefix}_infos_train.pkl')

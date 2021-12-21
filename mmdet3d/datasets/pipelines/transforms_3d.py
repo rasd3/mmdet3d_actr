@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import numpy as np
+import cv2
 import warnings
 from mmcv import is_tuple_of
 from mmcv.utils import build_from_cfg
@@ -303,12 +304,20 @@ class ObjectSample(object):
         if self.sample_2d:
             img = input_dict['img']
             gt_bboxes_2d = input_dict['gt_bboxes']
+            img_dict = {
+                'path': input_dict['gt_bboxes_gtimg_path'],
+                'disc': input_dict['gt_bboxes_gtimg_disc']
+            }
             # Assume for now 3D & 2D bboxes are the same
+            #  cv2.imwrite('img_before.png', img)
             sampled_dict = self.db_sampler.sample_all(
                 gt_bboxes_3d.tensor.numpy(),
                 gt_labels_3d,
                 gt_bboxes_2d=gt_bboxes_2d,
-                img=img)
+                sample_idx=input_dict['sample_idx'],
+                img=img,
+                img_dict=img_dict)
+            #  cv2.imwrite('img_after.png', sampled_dict['img'])
         else:
             sampled_dict = self.db_sampler.sample_all(
                 gt_bboxes_3d.tensor.numpy(), gt_labels_3d, img=None)

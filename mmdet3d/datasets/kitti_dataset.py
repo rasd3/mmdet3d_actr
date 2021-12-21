@@ -191,6 +191,9 @@ class KittiDataset(Custom3DDataset):
             bboxes=gt_bboxes,
             labels=gt_labels,
             gt_names=gt_names)
+        if 'gtimg_path' in annos:
+            anns_results.update({'gtimg_path': annos['gtimg_path'],
+                                 'gtimg_disc': annos['gtimg_disc']})
         return anns_results
 
     def drop_arrays_by_name(self, gt_names, used_classes):

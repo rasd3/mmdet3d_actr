@@ -136,11 +136,20 @@ class_names = ['Pedestrian', 'Cyclist', 'Car']
 img_norm_cfg = dict(
     mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 input_modality = dict(use_lidar=True, use_camera=True)
+db_sampler = dict(
+    data_root=data_root,
+    info_path=data_root + 'kitti_dbinfos_train.pkl',
+    rate=1.0,
+    prepare=dict(
+        filter_by_difficulty=[-1],
+        filter_by_min_points=dict(Car=5, Pedestrian=10, Cyclist=10)),
+    classes=class_names,
+    sample_groups=dict(Car=12, Pedestrian=6, Cyclist=6))
 train_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
-    #  dict(type='ObjectSample', db_sampler=db_sampler),
+    dict(type='ObjectSample', db_sampler=db_sampler),
     dict(
         type='Resize',
         img_scale=[(640, 192), (2560, 768)],
@@ -203,7 +212,7 @@ eval_pipeline = [
 
 data = dict(
     samples_per_gpu=4,
-    workers_per_gpu=2,
+    workers_per_gpu=0,
     train=dict(
         type='RepeatDataset',
         times=2,

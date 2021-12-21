@@ -1,5 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import numpy as np
+import os
+from mmdet3d.core.bbox.box_np_ops import iou_jit
 from collections import OrderedDict
 from concurrent import futures as futures
 from os import path as osp
@@ -89,6 +91,10 @@ def get_pose_path(idx,
                                relative_path, exist_check, use_prefix_id)
 
 
+def euc_dis(box1, box2):
+    return np.sqrt(np.power((box1 - box2), 2).sum())
+
+
 def get_label_anno(label_path):
     annotations = {}
     annotations.update({
@@ -130,6 +136,42 @@ def get_label_anno(label_path):
     index = list(range(num_objects)) + [-1] * (num_gt - num_objects)
     annotations['index'] = np.array(index, dtype=np.int32)
     annotations['group_ids'] = np.arange(num_gt, dtype=np.int32)
+
+    # allocate each box to gt_image file
+    if osp.isdir('./data/kitti/gt_database_img'):
+        idx, m_val, m_idx = 0, np.inf, 0
+        ann_bbox = annotations['bbox']
+        i_bbox, ipath_list, idisc_list = [], [], []
+        while True:
+            txt_dir = './data/kitti/gt_database_img/txt/%s_%03d.txt' % (
+                osp.basename(label_path[:-4]), idx)
+            if not osp.isfile(txt_dir):
+                break
+            bbox = open(txt_dir, 'r').readline().strip().split(' ')
+            bbox = [int(c) for c in bbox]
+            i_bbox.append(np.array(bbox))
+            idx += 1
+        i_bbox = np.array(i_bbox)
+        if i_bbox.shape[0] == 0:
+            i_bbox = np.array([[0., 0., 1., 1.]])
+        iou_m = iou_jit(ann_bbox.astype(np.float), i_bbox.astype(np.float))
+        ann_idx = iou_m.argmax(1)
+        for i, a_i in enumerate(ann_idx):
+            if iou_m[i][a_i] < 0.3:
+                ipath_list.append(' ')
+                idisc_list.append(np.array([0., 0.]))
+            else:
+                ipath_list.append(
+                    './data/kitti/gt_database_img/img/%s_%03d.png' %
+                    (osp.basename(label_path[:-4]), a_i))
+                idisc_list.append(
+                    np.array([
+                        i_bbox[a_i][0] - ann_bbox[i][0],
+                        i_bbox[a_i][1] - ann_bbox[i][1]
+                    ]).astype(np.int))
+        annotations['gtimg_path'] = np.array(ipath_list)
+        annotations['gtimg_disc'] = np.array(idisc_list)
+
     return annotations
 
 
