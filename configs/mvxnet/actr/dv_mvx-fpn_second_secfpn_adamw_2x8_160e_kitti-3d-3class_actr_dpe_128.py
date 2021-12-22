@@ -1,4 +1,4 @@
-_base_ = ['../_base_/schedules/cosine.py', '../_base_/default_runtime.py']
+_base_ = ['../../_base_/schedules/cosine.py', '../../_base_/default_runtime.py']
 
 # model settings
 voxel_size = [0.05, 0.05, 0.1]
@@ -29,7 +29,7 @@ model = dict(
     pts_voxel_encoder=dict(
         type='DynamicVFE',
         in_channels=4,
-        feat_channels=[64, 64],
+        feat_channels=[64, 128],
         with_distance=False,
         voxel_size=voxel_size,
         with_cluster_center=True,
@@ -41,7 +41,7 @@ model = dict(
                 fusion_method='replace',
                 num_bins=80,
                 num_channels=[256, 256, 256, 256, 256],
-                query_num_feat=64,
+                query_num_feat=128,
                 num_enc_layers=4,
                 max_num_ne_voxel=22000,
                 pos_encode_method='depth'
@@ -49,7 +49,7 @@ model = dict(
         )),
     pts_middle_encoder=dict(
         type='SparseEncoder',
-        in_channels=64,
+        in_channels=128,
         sparse_shape=[41, 1600, 1408],
         order=('conv', 'norm', 'act')),
     pts_backbone=dict(
@@ -208,7 +208,7 @@ data = dict(
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
-        times=2,
+        times=4,
         dataset=dict(
             type=dataset_type,
             data_root=data_root,
@@ -248,7 +248,8 @@ optimizer = dict(weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
-evaluation = dict(interval=1, pipeline=eval_pipeline)
+evaluation = dict(interval=2, pipeline=eval_pipeline)
+find_unused_parameters=True
 
 # You may need to download the model first is the network is unstable
 load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa

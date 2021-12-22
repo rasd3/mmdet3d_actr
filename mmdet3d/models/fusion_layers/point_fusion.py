@@ -343,6 +343,7 @@ class ACTR(BaseModule):
         coor_y = coor_y / h
         coor_x = coor_x / w
         grid = torch.cat([coor_x, coor_y], dim=1)  # Nx2 -> 1x1xNx2
+        grid = torch.clamp(grid, min=0.0, max=1.0)
         return grid
 
     def forward(self, img_feats, pts, pts_feats, img_metas):
@@ -390,7 +391,7 @@ class ACTR(BaseModule):
             pts_b[b, :pts[b].shape[0]] = pts[b][:, :3]
             coor_2d_b[b, :pts[b].shape[0]] = coor_2d
             pts_feats_b[b, :pts[b].shape[0]] = pts_feats[b]
-            abcd = 1
+
 
         enh_feat = self.actr(
             v_feat=pts_feats_b,

@@ -1,4 +1,4 @@
-_base_ = ['../_base_/schedules/cosine.py', '../_base_/default_runtime.py']
+_base_ = ['../../_base_/schedules/cosine.py', '../../_base_/default_runtime.py']
 
 # model settings
 voxel_size = [0.05, 0.05, 0.1]

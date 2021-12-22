@@ -1,4 +1,4 @@
-_base_ = ['../_base_/schedules/cosine.py', '../_base_/default_runtime.py']
+_base_ = ['../../_base_/schedules/cosine.py', '../../_base_/default_runtime.py']
 
 # model settings
 voxel_size = [0.05, 0.05, 0.1]
@@ -29,7 +29,7 @@ model = dict(
     pts_voxel_encoder=dict(
         type='DynamicVFE',
         in_channels=4,
-        feat_channels=[64, 64],
+        feat_channels=[64, 128],
         with_distance=False,
         voxel_size=voxel_size,
         with_cluster_center=True,
@@ -41,15 +41,15 @@ model = dict(
                 fusion_method='replace',
                 num_bins=80,
                 num_channels=[256, 256, 256, 256, 256],
-                query_num_feat=64,
+                query_num_feat=128,
                 num_enc_layers=4,
                 max_num_ne_voxel=22000,
-                pos_encode_method='image_coor'
+                pos_encode_method='depth'
             )
         )),
     pts_middle_encoder=dict(
         type='SparseEncoder',
-        in_channels=64,
+        in_channels=128,
         sparse_shape=[41, 1600, 1408],
         order=('conv', 'norm', 'act')),
     pts_backbone=dict(

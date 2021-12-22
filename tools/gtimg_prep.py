@@ -112,4 +112,4 @@ def make_scene_list():
 
 if __name__ == '__main__':
     dbpkl_to_dbimgpkl()
-    #  make_scene_list()
+    make_scene_list()
