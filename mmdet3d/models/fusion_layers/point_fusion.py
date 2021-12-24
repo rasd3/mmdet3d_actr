@@ -401,4 +401,12 @@ class ACTR(BaseModule):
         )
         enh_feat_cat = torch.cat(
             [f[:np] for f, np in zip(enh_feat, num_points)])
-        return enh_feat_cat
+
+        if self.fusion_method == 'replace':
+            ret_feat = enh_feat_cat
+        elif self.fusion_method == 'concat':
+            ret_feat = torch.cat((pts_feats, enh_feat_cat), dim=1)
+        else:
+            NotImplementedError('Invalid ACTR fusion method')
+
+        return ret_feat
