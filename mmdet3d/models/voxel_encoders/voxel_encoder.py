@@ -217,12 +217,14 @@ class DynamicVFE(nn.Module):
         return center_per_point
 
     @force_fp32(out_fp16=True)
-    def forward(self,
-                features,
-                coors,
-                points=None,
-                img_feats=None,
-                img_metas=None):
+    def forward(
+        self,
+        features,
+        coors,
+        points=None,
+        img_feats=None,
+        img_metas=None,
+    ):
         """Forward functions.
 
         Args:

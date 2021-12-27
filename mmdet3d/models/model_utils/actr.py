@@ -55,6 +55,7 @@ class ACTR(nn.Module):
         hidden_dim = transformer.d_model
         self.num_feature_levels = num_feature_levels
         num_backbone_outs = len(num_channels)
+        self.num_backbone_outs = num_backbone_outs
         assert num_backbone_outs == num_feature_levels
         if num_feature_levels > 1:
             input_proj_list = []

@@ -359,6 +359,7 @@ class ACTR(BaseModule):
             torch.Tensor: Fused features of each point.
         """
         batch_size = len(pts)
+        img_feats = img_feats[:self.actr.num_backbone_outs]
         num_points = [i.shape[0] for i in pts]
         pts_feats_b = torch.zeros(
             (batch_size, self.actr.max_num_ne_voxel, pts_feats.shape[1]),
@@ -391,7 +392,6 @@ class ACTR(BaseModule):
             pts_b[b, :pts[b].shape[0]] = pts[b][:, :3]
             coor_2d_b[b, :pts[b].shape[0]] = coor_2d
             pts_feats_b[b, :pts[b].shape[0]] = pts_feats[b]
-
 
         enh_feat = self.actr(
             v_feat=pts_feats_b,

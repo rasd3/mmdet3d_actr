@@ -287,6 +287,17 @@ class MVXTwoStageDetector(Base3DDetector):
                 gt_bboxes_ignore=gt_bboxes_ignore,
                 proposals=proposals)
             losses.update(losses_img)
+
+        for key in losses:
+            if type(losses[key]) == list:
+                loss_val = losses[key][0]
+            else:
+                loss_val = losses[key]
+            if loss_val.isnan() == True or loss_val > 10000.:
+                breakpoint()
+                abcd = 1
+
+
         return losses
 
     def forward_pts_train(self,

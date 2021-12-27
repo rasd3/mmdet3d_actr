@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
+import copy
 from mmcv.runner import force_fp32
 from torch.nn import functional as F
 
@@ -21,6 +22,9 @@ class DynamicMVXFasterRCNN(MVXTwoStageDetector):
 
     def __init__(self, **kwargs):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
+        for name, param in self.named_parameters():
+            if 'img' in name:
+                param.requires_grad = False
 
     @torch.no_grad()
     @force_fp32()
