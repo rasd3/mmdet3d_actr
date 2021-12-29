@@ -73,9 +73,9 @@ class BatchSampler:
                 self._idx += 1
                 continue
             #  if self._scene_list[
-                    #  sampled_dict['image_idx']] != self._scene_list[sample_idx]:
-                #  self._idx += 1
-                #  continue
+            #  sampled_dict['image_idx']] != self._scene_list[sample_idx]:
+            #  self._idx += 1
+            #  continue
             ret.append(self._indices[self._idx])
             self._idx += 1
             if self._idx == self._example_num:
@@ -272,11 +272,12 @@ class DataBaseSampler(object):
                 gts_img.append(np.array([0]))
             else:
                 gts_img.append(cv2.imread(img_dict['path'][i]))
-            gts_coor.append(np.array([bbox[1] + disc[1], bbox[0] + disc[0]]))
+            gts_coor.append(
+                np.array([bbox[1] + disc[1], bbox[0] + disc[0]], dtype=np.int))
         for i in range(gt_num, gts_num):
             samp = sampled_dict[i - gt_num]
-            gts_img.append(cv2.imread('data/kitti/' + samp['img_path']))
-            gts_coor.append(samp['img_bbox_coor'][::-1])
+            gts_img.append(cv2.imread(samp['img_path']))
+            gts_coor.append(samp['img_bbox_coor'][::-1][:2])
         for i in range(gt_num, gts_num):
             samp = sampled_dict[i - gt_num]
             mask = img2mask(gts_img[i])
@@ -297,20 +298,17 @@ class DataBaseSampler(object):
                         mask = np.logical_and(mask_btw, mask)
             cut_x = min(img.shape[0] - gts_coor[i][0] - gts_img[i].shape[0], 0)
             cut_y = min(img.shape[1] - gts_coor[i][1] - gts_img[i].shape[1], 0)
-            if mask.shape[0] + cut_x <=0 or mask.shape[1] + cut_y <=0:
+            if mask.shape[0] + cut_x <= 0 or mask.shape[1] + cut_y <= 0:
                 continue
             mask = mask[:mask.shape[0] + cut_x, :mask.shape[1] + cut_y]
             if mask.sum() == 0:
                 continue
-            try:
-                img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] + cut_x,
-                    gts_coor[i][1]:gts_coor[i][1] + gts_img[i].shape[1] +
-                    cut_y][mask] = gts_img[i][:gts_img[i].shape[0] +
-                                              cut_x, :gts_img[i].shape[1] +
-                                              cut_y][mask]
-            except:
-                breakpoint()
-                abcd = 1
+            img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
+                cut_x,
+                gts_coor[i][1]:gts_coor[i][1] + gts_img[i].shape[1] +
+                cut_y][mask] = gts_img[i][:gts_img[i].shape[0] +
+                                          cut_x, :gts_img[i].shape[1] +
+                                          cut_y][mask]
 
         return img
 
