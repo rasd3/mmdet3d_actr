@@ -479,6 +479,7 @@ class DataBaseSampler(object):
             cv_boxes = np.stack([i['bbox'] for i in sampled], axis=0)
             total_cv = np.concatenate([gt_bboxes_2d, cv_boxes], axis=0)
             overlaps_iou = box_np_ops.overlap_jit(total_cv)
+            #  overlaps_iou = box_np_ops.iou_jit(total_cv, total_cv)
             overlaps_iou[diag, diag] = 0.
             for i in range(num_gt, num_gt + num_sampled):
                 if overlaps_iou[i].max() > self.overlap_2d_thres:

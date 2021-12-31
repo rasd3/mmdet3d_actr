@@ -58,7 +58,8 @@ class DynamicMVXFasterRCNN(MVXTwoStageDetector):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x = self.pts_middle_encoder(voxel_features, feature_coors, batch_size)
+        x = self.pts_middle_encoder(voxel_features, feature_coors, batch_size,
+                                    img_feats, img_metas, points)
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)
