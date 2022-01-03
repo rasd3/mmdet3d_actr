@@ -297,7 +297,7 @@ class ObjectSample(object):
                 in the result dict.
         """
         if 'epoch' in input_dict:
-            if input_dict['max_epoch'] - input_dict['epoch'] <= 10:
+            if input_dict['max_epoch'] - input_dict['epoch'] <= 5:
                 return input_dict
         gt_bboxes_3d = input_dict['gt_bboxes_3d']
         gt_labels_3d = input_dict['gt_labels_3d']

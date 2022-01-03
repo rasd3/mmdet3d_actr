@@ -140,6 +140,7 @@ train_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
+         with_label=True, with_img_gt=True),
     #  dict(type='ObjectSample', db_sampler=db_sampler),
     dict(
         type='Resize',

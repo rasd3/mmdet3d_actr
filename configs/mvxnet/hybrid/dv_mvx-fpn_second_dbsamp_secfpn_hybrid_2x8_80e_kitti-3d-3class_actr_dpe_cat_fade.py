@@ -44,7 +44,7 @@ model = dict(
                 num_bins=80,
                 num_channels=[256, 256, 256],
                 query_num_feat=64,
-                num_enc_layers=4,
+                num_enc_layers=2,
                 max_num_ne_voxel=36000,
                 pos_encode_method='depth'))),
     pts_middle_encoder=dict(
@@ -261,7 +261,21 @@ data = dict(
         box_type_3d='LiDAR'))
 
 # Training settings
-optimizer = dict(weight_decay=0.01)
+optimizer = dict(
+    _delete_=True,
+    constructor='HybridOptimizerConstructor',
+    pts=dict(
+        type='AdamW',
+        lr=0.003,
+        betas=(0.95, 0.99),
+        weight_decay=0.01,
+        step_interval=1),
+    img=dict(
+        type='SGD',
+        lr=0.01,
+        momentum=0.9,
+        weight_decay=0.0001,
+        step_interval=1))
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
