@@ -79,6 +79,8 @@ class KittiDataset(Custom3DDataset):
         assert self.modality is not None
         self.pcd_limit_range = pcd_limit_range
         self.pts_prefix = pts_prefix
+        self.epoch = -1
+        self.max_epoch = -1
 
     def _get_pts_filename(self, idx):
         """Get point cloud filename according to the given index.

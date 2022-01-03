@@ -40,7 +40,7 @@ model = dict(
         fusion_layer=dict(
             type='ACTR',
             actr_cfg=dict(
-                fusion_method='replace',
+                fusion_method='concat',
                 num_bins=80,
                 num_channels=[256, 256, 256, 256, 256],
                 query_num_feat=64,
@@ -49,7 +49,7 @@ model = dict(
                 pos_encode_method='depth'))),
     pts_middle_encoder=dict(
         type='SparseEncoder',
-        in_channels=64,
+        in_channels=128,
         sparse_shape=[41, 1600, 1408],
         order=('conv', 'norm', 'act')),
     pts_backbone=dict(
@@ -222,7 +222,7 @@ eval_pipeline = [
 
 data = dict(
     samples_per_gpu=4,
-    workers_per_gpu=0,
+    workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
         times=2,
@@ -270,4 +270,5 @@ find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
 load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
+
 runner = dict(type='EpochDeliverBasedRunner', max_epochs=40)

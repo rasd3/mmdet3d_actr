@@ -150,6 +150,9 @@ class Custom3DDataset(Dataset):
         input_dict = self.get_data_info(index)
         if input_dict is None:
             return None
+        if self.epoch != -1:
+            input_dict['epoch'] = self.epoch
+            input_dict['max_epoch'] = self.max_epoch
         self.pre_pipeline(input_dict)
         example = self.pipeline(input_dict)
         if self.filter_empty_gt and \
