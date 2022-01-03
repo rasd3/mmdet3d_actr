@@ -99,6 +99,7 @@ class SparseEncoder(nn.Module):
             conv_type='SparseConv3d')
 
         self.fusion_layer = None
+        self.fusion_pos = None
         if fusion_layer is not None:
             self.fusion_layer = builder.build_fusion_layer(fusion_layer)
             self.fusion_pos = fusion_pos
@@ -146,7 +147,7 @@ class SparseEncoder(nn.Module):
         encode_features = []
         for idx, encoder_layer in enumerate(self.encoder_layers):
             x = encoder_layer(x)
-            if idx in self.fusion_pos:
+            if self.fusion_pos is not None and idx in self.fusion_pos:
                 c_pts = self.coor2pts(x)
                 f_feats = self.fusion_layer(img_feats, c_pts, x.features, img_metas)
                 x.features = f_feats

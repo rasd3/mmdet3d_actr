@@ -287,6 +287,8 @@ class MVXTwoStageDetector(Base3DDetector):
                 gt_bboxes_ignore=gt_bboxes_ignore,
                 proposals=proposals)
             losses.update(losses_img)
+        #  print('img_feat max: %f' % img_feats[0].max())
+        #  print('pts_feat max: %f' % pts_feats[0].max())
 
         for key in losses:
             if type(losses[key]) == list:
