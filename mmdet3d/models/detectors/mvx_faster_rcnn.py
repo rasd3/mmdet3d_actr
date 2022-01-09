@@ -24,8 +24,8 @@ class DynamicMVXFasterRCNN(MVXTwoStageDetector):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
         for name, param in self.named_parameters():
             if 'img' in name:
-                #  param.requires_grad = False
-                pass
+                param.requires_grad = False
+                #  pass
 
     @torch.no_grad()
     @force_fp32()

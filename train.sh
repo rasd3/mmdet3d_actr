@@ -1,0 +1,3 @@
+bash ./tools/dist_train.sh ./configs/mvxnet/hybrid/dv_mvx-fpn_second_dbsamp_secfpn_hybrid_2x8_80e_kitti-3d-3class_actr_c1_dpe_cat_fade.py 4 --work-dir ./work_dirs/mvxnet/hybrid/hybrid_actr_c1_dbsamp_dpe_cat_fade_4x4_80e --deterministic
+bash ./tools/dist_train.sh ./configs/mvxnet/hybrid/dv_mvx-fpn_second_dbsamp_secfpn_hybrid_2x8_80e_kitti-3d-3class_actr_dpe_cat_fade_lr4.py 4 --work-dir ./work_dirs/mvxnet/hybrid/hybrid_actr_dbsamp_dpe_cat_fade_lr4_4x4_80e --deterministic
+bash ./tools/dist_train.sh ./configs/mvxnet/hybrid/dv_mvx-fpn_second_dbsamp_secfpn_hybrid_2x8_160e_kitti-3d-3class_actr_dpe_cat_fade.py 4 --work-dir ./work_dirs/mvxnet/hybrid/hybrid_actr_dbsamp_dpe_cat_fade_lr3_4x4_160e --deterministic
