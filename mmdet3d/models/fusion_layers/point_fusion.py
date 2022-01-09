@@ -309,11 +309,16 @@ class PointFusion(BaseModule):
 @FUSION_LAYERS.register_module()
 class ACTR(BaseModule):
 
-    def __init__(self, actr_cfg, init_cfg=None, coord_type='LIDAR'):
+    def __init__(self,
+                 actr_cfg,
+                 init_cfg=None,
+                 coord_type='LIDAR',
+                 activate_out=False):
         super(ACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
         self.actr = build_actr(actr_cfg)
         self.coord_type = coord_type
+        self.activate_out = activate_out
 
     def get_2d_coor(self, img_meta, points, proj_mat, coord_type,
                     img_scale_factor, img_crop_offset, img_flip, img_pad_shape,
@@ -403,10 +408,15 @@ class ACTR(BaseModule):
             [f[:np] for f, np in zip(enh_feat, num_points)])
 
         if self.fusion_method == 'replace':
-            ret_feat = enh_feat_cat
+            fuse_out = enh_feat_cat
         elif self.fusion_method == 'concat':
-            ret_feat = torch.cat((pts_feats, enh_feat_cat), dim=1)
+            fuse_out = torch.cat((pts_feats, enh_feat_cat), dim=1)
+        elif self.fusion_method == 'sum':
+            fuse_out = pts_feats + enh_feat_cat
         else:
             NotImplementedError('Invalid ACTR fusion method')
 
-        return ret_feat
+        if self.activate_out:
+            fuse_out = F.relu(fuse_out)
+
+        return fuse_out
