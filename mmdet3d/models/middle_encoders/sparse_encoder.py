@@ -8,6 +8,7 @@ from mmdet3d.ops import spconv as spconv
 from ..builder import MIDDLE_ENCODERS
 from .. import builder
 
+
 @MIDDLE_ENCODERS.register_module()
 class SparseEncoder(nn.Module):
     r"""Sparse encoder for SECOND and Part-A2.
@@ -59,6 +60,14 @@ class SparseEncoder(nn.Module):
         self.fp16_enabled = False
         # Spconv init all weight on its own
 
+        self.fusion_layer = None
+        self.fusion_pos = None
+        if fusion_layer is not None:
+            self.fusion_layer = builder.build_fusion_layer(fusion_layer)
+            self.fusion_pos = fusion_pos
+            self.voxel_size = voxel_size
+            self.point_cloud_range = point_cloud_range
+
         assert isinstance(order, tuple) and len(order) == 3
         assert set(order) == {'conv', 'norm', 'act'}
 
@@ -98,18 +107,10 @@ class SparseEncoder(nn.Module):
             indice_key='spconv_down2',
             conv_type='SparseConv3d')
 
-        self.fusion_layer = None
-        self.fusion_pos = None
-        if fusion_layer is not None:
-            self.fusion_layer = builder.build_fusion_layer(fusion_layer)
-            self.fusion_pos = fusion_pos
-            self.voxel_size = voxel_size
-            self.point_cloud_range = point_cloud_range
-
-
     def coor2pts(self, x):
         ratio = self.sparse_shape[1] / x.spatial_shape[1]
-        pts = x.indices * torch.tensor((self.voxel_size + [1])[::-1]).cuda() * ratio
+        pts = x.indices * torch.tensor(
+            (self.voxel_size + [1])[::-1]).cuda() * ratio
         pts[:, 0] = pts[:, 0] / ratio
         pts[:, 1:] += torch.tensor(self.point_cloud_range[:3][::-1]).cuda()
         pts[:, 1:] = pts[:, [3, 2, 1]]
@@ -149,7 +150,8 @@ class SparseEncoder(nn.Module):
             x = encoder_layer(x)
             if self.fusion_pos is not None and idx in self.fusion_pos:
                 c_pts = self.coor2pts(x)
-                f_feats = self.fusion_layer(img_feats, c_pts, x.features, img_metas)
+                f_feats = self.fusion_layer(img_feats, c_pts, x.features,
+                                            img_metas)
                 x.features = f_feats
 
             encode_features.append(x)
@@ -193,6 +195,8 @@ class SparseEncoder(nn.Module):
                 padding = tuple(self.encoder_paddings[i])[j]
                 # each stage started with a spconv layer
                 # except the first stage
+                if i - 1 in self.fusion_pos and self.fusion_layer.fusion_method == 'concat' and j == 0:
+                    in_channels = out_channels
                 if i != 0 and j == 0 and block_type == 'conv_module':
                     blocks_list.append(
                         make_block(
