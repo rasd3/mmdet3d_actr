@@ -13,6 +13,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+model_zoo/
 eggs/
 .eggs/
 lib/
