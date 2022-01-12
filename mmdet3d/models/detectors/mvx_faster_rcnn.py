@@ -20,12 +20,12 @@ class MVXFasterRCNN(MVXTwoStageDetector):
 class DynamicMVXFasterRCNN(MVXTwoStageDetector):
     """Multi-modality VoxelNet using Faster R-CNN and dynamic voxelization."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, img_pipeline_freeze=False, **kwargs):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
+        self.img_pipeline_freeze = img_pipeline_freeze
         for name, param in self.named_parameters():
             if 'img' in name:
-                param.requires_grad = False
-                #  pass
+                param.requires_grad = not self.img_pipeline_freeze
 
     @torch.no_grad()
     @force_fp32()

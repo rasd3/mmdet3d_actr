@@ -195,6 +195,7 @@ def build(model_cfg):
     args.enc_layers = model_cfg.num_enc_layers
     args.pos_encode_method = model_cfg.pos_encode_method
     args.max_num_ne_voxel = model_cfg.max_num_ne_voxel
+    args.num_feature_levels = len(model_cfg.num_channels)
 
     transformer = build_deformable_transformer(args)
     model = ACTR(
