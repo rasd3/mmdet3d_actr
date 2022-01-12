@@ -20,7 +20,7 @@ class MVXFasterRCNN(MVXTwoStageDetector):
 class DynamicMVXFasterRCNN(MVXTwoStageDetector):
     """Multi-modality VoxelNet using Faster R-CNN and dynamic voxelization."""
 
-    def __init__(self, img_pipeline_freeze=False, **kwargs):
+    def __init__(self, img_pipeline_freeze=True, **kwargs):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
         self.img_pipeline_freeze = img_pipeline_freeze
         for name, param in self.named_parameters():

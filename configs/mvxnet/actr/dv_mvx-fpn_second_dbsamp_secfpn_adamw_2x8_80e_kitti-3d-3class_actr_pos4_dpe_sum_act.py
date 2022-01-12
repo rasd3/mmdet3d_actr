@@ -37,21 +37,27 @@ model = dict(
         with_cluster_center=True,
         with_voxel_center=True,
         point_cloud_range=point_cloud_range,
+    ),
+    pts_middle_encoder=dict(
+        type='SparseEncoder',
+        in_channels=64,
+        sparse_shape=[41, 1600, 1408],
+        order=('conv', 'norm', 'act'),
+        fusion_pos=[2, 3],
+        voxel_size=voxel_size,
+        point_cloud_range=point_cloud_range,
         fusion_layer=dict(
             type='ACTR',
+            activate_out=True,
             actr_cfg=dict(
-                fusion_method='concat',
+                fusion_method='sum',
                 num_bins=80,
-                num_channels=[256, 256, 256],
+                num_channels=[256, 256, 256, 256, 256],
                 query_num_feat=64,
                 num_enc_layers=3,
                 max_num_ne_voxel=36000,
-                pos_encode_method='depth'))),
-    pts_middle_encoder=dict(
-        type='SparseEncoder',
-        in_channels=128,
-        sparse_shape=[41, 1600, 1408],
-        order=('conv', 'norm', 'act')),
+                pos_encode_method='depth'))
+    ),
     pts_backbone=dict(
         type='SECOND',
         in_channels=256,
@@ -222,7 +228,7 @@ eval_pipeline = [
 
 data = dict(
     samples_per_gpu=4,
-    workers_per_gpu=4,
+    workers_per_gpu=2,
     train=dict(
         type='RepeatDataset',
         times=2,
@@ -261,22 +267,7 @@ data = dict(
         box_type_3d='LiDAR'))
 
 # Training settings
-optimizer = dict(
-    _delete_=True,
-    constructor='HybridOptimizerConstructor',
-    pts=dict(
-        type='AdamW',
-        lr=0.003,
-        betas=(0.95, 0.99),
-        weight_decay=0.01,
-        step_interval=1),
-    img=dict(
-        type='SGD',
-        lr=0.001,
-        paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.),
-        momentum=0.9,
-        weight_decay=0.0001,
-        step_interval=1))
+optimizer = dict(weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
@@ -285,5 +276,3 @@ find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
 load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
-
-runner = dict(type='EpochDeliverBasedRunner', max_epochs=40)
