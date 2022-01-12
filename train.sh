@@ -1,2 +1,2 @@
-bash ./tools/dist_train.sh ./configs/mvxnet/pgd/dv_mvx_pgd_fpn_second_secfpn_adamw_2x8_80e_kitti-3d-3class_itrain_adam.py 4 --work-dir ./work_dirs/mvxnet/pgd/mvxnet_2x4_80e_itrain_adam --deterministic
-bash ./tools/dist_train.sh ./configs/mvxnet/pgd/dv_mvx_pgd_fpn_second_secfpn_adamw_2x8_80e_kitti-3d-3class_itrain_hybrid.py 4 --work-dir ./work_dirs/mvxnet/pgd/mvxnet_2x4_80e_itrain_hybrid --deterministic
+bash ./tools/dist_train.sh ./configs/mvxnet/actr/dv_mvx-fpn_second_dbsamp_secfpn_adamw_2x8_80e_kitti-3d-car_actr_pos3_dpe_sum.py 4 --work-dir ./work_dirs/mvxnet/actr/mvxnet_4x4_car_80e_dbsamp_actr_dpe_pos2_sum --deterministic
+bash ./tools/dist_train.sh ./configs/mvxnet/actr/dv_mvx-fpn_second_dbsamp_secfpn_adamw_2x8_160e_kitti-3d-car_actr_pos3_dpe_sum.py 4 --work-dir ./work_dirs/mvxnet/actr/mvxnet_4x4_car_160e_dbsamp_actr_dpe_pos2_sum --deterministic
