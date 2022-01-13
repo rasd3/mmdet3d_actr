@@ -21,6 +21,7 @@ IDX = 0
 @DETECTORS.register_module()
 class MVXTwoStageDetector(Base3DDetector):
     """Base class of Multi-modality VoxelNet."""
+
     def __init__(self,
                  pts_voxel_layer=None,
                  pts_voxel_encoder=None,
@@ -36,7 +37,8 @@ class MVXTwoStageDetector(Base3DDetector):
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
-                 init_cfg=None):
+                 init_cfg=None,
+                 img_pipeline_freeze=True):
         super(MVXTwoStageDetector, self).__init__(init_cfg=init_cfg)
 
         if pts_voxel_layer:
@@ -87,21 +89,27 @@ class MVXTwoStageDetector(Base3DDetector):
             if img_pretrained is not None:
                 warnings.warn('DeprecationWarning: pretrained is a deprecated \
                     key, please consider using init_cfg')
-                self.img_backbone.init_cfg = dict(type='Pretrained',
-                                                  checkpoint=img_pretrained)
+                self.img_backbone.init_cfg = dict(
+                    type='Pretrained', checkpoint=img_pretrained)
         if self.with_img_roi_head:
             if img_pretrained is not None:
                 warnings.warn('DeprecationWarning: pretrained is a deprecated \
                     key, please consider using init_cfg')
-                self.img_roi_head.init_cfg = dict(type='Pretrained',
-                                                  checkpoint=img_pretrained)
+                self.img_roi_head.init_cfg = dict(
+                    type='Pretrained', checkpoint=img_pretrained)
 
         if self.with_pts_backbone:
             if pts_pretrained is not None:
                 warnings.warn('DeprecationWarning: pretrained is a deprecated \
                     key, please consider using init_cfg')
-                self.pts_backbone.init_cfg = dict(type='Pretrained',
-                                                  checkpoint=pts_pretrained)
+                self.pts_backbone.init_cfg = dict(
+                    type='Pretrained', checkpoint=pts_pretrained)
+
+        ### for control img pipeline
+        self.img_pipeline_freeze = img_pipeline_freeze
+        for name, param in self.named_parameters():
+            if 'img' in name:
+                param.requires_grad = not self.img_pipeline_freeze
 
     @property
     def with_img_shared_head(self):
@@ -194,10 +202,14 @@ class MVXTwoStageDetector(Base3DDetector):
         if not self.with_pts_bbox:
             return None
         voxels, num_points, coors = self.voxelize(pts)
-        voxel_features = self.pts_voxel_encoder(voxels, num_points, coors,
-                                                img_feats, img_metas)
+        if type(self.pts_voxel_encoder).__name__ == 'HardSimpleVFE':
+            voxel_features = self.pts_voxel_encoder(voxels, num_points, coors)
+        else:
+            voxel_features = self.pts_voxel_encoder(voxels, num_points, coors,
+                                                    img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x = self.pts_middle_encoder(voxel_features, coors, batch_size)
+        x = self.pts_middle_encoder(voxel_features, coors, batch_size,
+                                    img_feats, img_metas, pts)
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)
@@ -284,9 +296,8 @@ class MVXTwoStageDetector(Base3DDetector):
         Returns:
             dict: Losses of different branches.
         """
-        img_feats, pts_feats = self.extract_feat(points,
-                                                 img=img,
-                                                 img_metas=img_metas)
+        img_feats, pts_feats = self.extract_feat(
+            points, img=img, img_metas=img_metas)
         #  self.feat_visualize(img_feats[0], img_metas)
         losses = dict()
         if pts_feats:
@@ -339,8 +350,8 @@ class MVXTwoStageDetector(Base3DDetector):
         """
         outs = self.pts_bbox_head(pts_feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
-        losses = self.pts_bbox_head.loss(*loss_inputs,
-                                         gt_bboxes_ignore=gt_bboxes_ignore)
+        losses = self.pts_bbox_head.loss(
+            *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
 
     def forward_img_train(self,
@@ -405,10 +416,8 @@ class MVXTwoStageDetector(Base3DDetector):
         else:
             proposal_list = proposals
 
-        return self.img_roi_head.simple_test(x,
-                                             proposal_list,
-                                             img_metas,
-                                             rescale=rescale)
+        return self.img_roi_head.simple_test(
+            x, proposal_list, img_metas, rescale=rescale)
 
     def simple_test_rpn(self, x, img_metas, rpn_test_cfg):
         """RPN test function."""
@@ -420,9 +429,8 @@ class MVXTwoStageDetector(Base3DDetector):
     def simple_test_pts(self, x, img_metas, rescale=False):
         """Test function of point cloud branch."""
         outs = self.pts_bbox_head(x)
-        bbox_list = self.pts_bbox_head.get_bboxes(*outs,
-                                                  img_metas,
-                                                  rescale=rescale)
+        bbox_list = self.pts_bbox_head.get_bboxes(
+            *outs, img_metas, rescale=rescale)
         bbox_results = [
             bbox3d2result(bboxes, scores, labels)
             for bboxes, scores, labels in bbox_list
@@ -431,21 +439,18 @@ class MVXTwoStageDetector(Base3DDetector):
 
     def simple_test(self, points, img_metas, img=None, rescale=False):
         """Test function without augmentaiton."""
-        img_feats, pts_feats = self.extract_feat(points,
-                                                 img=img,
-                                                 img_metas=img_metas)
+        img_feats, pts_feats = self.extract_feat(
+            points, img=img, img_metas=img_metas)
 
         bbox_list = [dict() for i in range(len(img_metas))]
         if pts_feats and self.with_pts_bbox:
-            bbox_pts = self.simple_test_pts(pts_feats,
-                                            img_metas,
-                                            rescale=rescale)
+            bbox_pts = self.simple_test_pts(
+                pts_feats, img_metas, rescale=rescale)
             for result_dict, pts_bbox in zip(bbox_list, bbox_pts):
                 result_dict['pts_bbox'] = pts_bbox
         if img_feats and self.with_img_bbox:
-            bbox_img = self.simple_test_img(img_feats,
-                                            img_metas,
-                                            rescale=rescale)
+            bbox_img = self.simple_test_img(
+                img_feats, img_metas, rescale=rescale)
             for result_dict, img_bbox in zip(bbox_list, bbox_img):
                 result_dict['img_bbox'] = img_bbox
         return bbox_list
@@ -474,9 +479,8 @@ class MVXTwoStageDetector(Base3DDetector):
         aug_bboxes = []
         for x, img_meta in zip(feats, img_metas):
             outs = self.pts_bbox_head(x)
-            bbox_list = self.pts_bbox_head.get_bboxes(*outs,
-                                                      img_meta,
-                                                      rescale=rescale)
+            bbox_list = self.pts_bbox_head.get_bboxes(
+                *outs, img_meta, rescale=rescale)
             bbox_list = [
                 dict(boxes_3d=bboxes, scores_3d=scores, labels_3d=labels)
                 for bboxes, scores, labels in bbox_list
