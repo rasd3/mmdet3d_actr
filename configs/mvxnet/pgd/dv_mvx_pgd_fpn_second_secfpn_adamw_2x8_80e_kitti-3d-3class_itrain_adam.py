@@ -253,7 +253,8 @@ optimizer = dict(weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
-evaluation = dict(interval=1, pipeline=eval_pipeline)
+evaluation = dict(interval=2, pipeline=eval_pipeline)
+find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
 load_from = './model_zoo/pgd_r101_caffe_fpn_gn_img_backbone.pth'  # noqa

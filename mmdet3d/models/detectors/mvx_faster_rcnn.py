@@ -24,7 +24,7 @@ class DynamicMVXFasterRCNN(MVXTwoStageDetector):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
         self.img_pipeline_freeze = img_pipeline_freeze
         for name, param in self.named_parameters():
-            if 'img' in name:
+            if 'img_backbone' in name or 'img_neck' in name:
                 param.requires_grad = not self.img_pipeline_freeze
 
     @torch.no_grad()
