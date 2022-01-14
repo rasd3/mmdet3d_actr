@@ -12,6 +12,23 @@ from ..builder import FUSION_LAYERS
 from . import apply_3d_transformation
 
 
+class BasicGate(nn.Module):
+    # mod code from 3D-CVF
+    def __init__(self, in_channel):
+        super(BasicGate, self).__init__()
+        self.in_channel = in_channel
+        self.gating_conv = nn.Conv1d(
+            self.in_channel,
+            1,
+            kernel_size=1,
+            stride=1,
+        )
+
+    def forward(self, src, trg):
+        g_map = torch.sigmoid(self.gating_conv(src))
+        return trg * g_map
+
+
 def point_sample(img_meta,
                  img_features,
                  points,
@@ -53,8 +70,10 @@ def point_sample(img_meta,
         torch.Tensor: NxC image features sampled by point coordinates.
     """
     # apply transformation based on info in img_meta
-    points = apply_3d_transformation(
-        points, coord_type, img_meta, reverse=True)
+    points = apply_3d_transformation(points,
+                                     coord_type,
+                                     img_meta,
+                                     reverse=True)
 
     # project points to camera coordinate
     pts_2d = points_cam2img(points, proj_mat)
@@ -126,7 +145,6 @@ class PointFusion(BaseModule):
         lateral_conv (bool, optional): Whether to apply lateral convs
             to image features. Defaults to True.
     """
-
     def __init__(self,
                  img_channels,
                  pts_channels,
@@ -169,15 +187,14 @@ class PointFusion(BaseModule):
         if lateral_conv:
             self.lateral_convs = nn.ModuleList()
             for i in range(len(img_channels)):
-                l_conv = ConvModule(
-                    img_channels[i],
-                    mid_channels,
-                    3,
-                    padding=1,
-                    conv_cfg=conv_cfg,
-                    norm_cfg=norm_cfg,
-                    act_cfg=self.act_cfg,
-                    inplace=False)
+                l_conv = ConvModule(img_channels[i],
+                                    mid_channels,
+                                    3,
+                                    padding=1,
+                                    conv_cfg=conv_cfg,
+                                    norm_cfg=norm_cfg,
+                                    act_cfg=self.act_cfg,
+                                    inplace=False)
                 self.lateral_convs.append(l_conv)
             self.img_transform = nn.Sequential(
                 nn.Linear(mid_channels * len(img_channels), out_channels),
@@ -280,13 +297,11 @@ class PointFusion(BaseModule):
             torch.Tensor: Single level image features of each point.
         """
         # TODO: image transformation also extracted
-        img_scale_factor = (
-            pts.new_tensor(img_meta['scale_factor'][:2])
-            if 'scale_factor' in img_meta.keys() else 1)
+        img_scale_factor = (pts.new_tensor(img_meta['scale_factor'][:2])
+                            if 'scale_factor' in img_meta.keys() else 1)
         img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
-        img_crop_offset = (
-            pts.new_tensor(img_meta['img_crop_offset'])
-            if 'img_crop_offset' in img_meta.keys() else 0)
+        img_crop_offset = (pts.new_tensor(img_meta['img_crop_offset'])
+                           if 'img_crop_offset' in img_meta.keys() else 0)
         proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
         img_pts = point_sample(
             img_meta=img_meta,
@@ -308,7 +323,6 @@ class PointFusion(BaseModule):
 
 @FUSION_LAYERS.register_module()
 class ACTR(BaseModule):
-
     def __init__(self,
                  actr_cfg,
                  init_cfg=None,
@@ -319,13 +333,17 @@ class ACTR(BaseModule):
         self.actr = build_actr(actr_cfg)
         self.coord_type = coord_type
         self.activate_out = activate_out
+        if self.fusion_method == 'gating_v1':
+            self.trg_gating = BasicGate(actr_cfg['query_num_feat'])
 
     def get_2d_coor(self, img_meta, points, proj_mat, coord_type,
                     img_scale_factor, img_crop_offset, img_flip, img_pad_shape,
                     img_shape):
         # apply transformation based on info in img_meta
-        points = apply_3d_transformation(
-            points, coord_type, img_meta, reverse=True)
+        points = apply_3d_transformation(points,
+                                         coord_type,
+                                         img_meta,
+                                         reverse=True)
 
         # project points to camera coordinate
         pts_2d = points_cam2img(points, proj_mat)
@@ -376,13 +394,11 @@ class ACTR(BaseModule):
 
         for b in range(batch_size):
             img_meta = img_metas[b]
-            img_scale_factor = (
-                pts[b].new_tensor(img_meta['scale_factor'][:2])
-                if 'scale_factor' in img_meta.keys() else 1)
+            img_scale_factor = (pts[b].new_tensor(img_meta['scale_factor'][:2])
+                                if 'scale_factor' in img_meta.keys() else 1)
             img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
-            img_crop_offset = (
-                pts[b].new_tensor(img_meta['img_crop_offset'])
-                if 'img_crop_offset' in img_meta.keys() else 0)
+            img_crop_offset = (pts[b].new_tensor(img_meta['img_crop_offset'])
+                               if 'img_crop_offset' in img_meta.keys() else 0)
             proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
             coor_2d = self.get_2d_coor(
                 img_meta=img_meta,
@@ -413,6 +429,12 @@ class ACTR(BaseModule):
             fuse_out = torch.cat((pts_feats, enh_feat_cat), dim=1)
         elif self.fusion_method == 'sum':
             fuse_out = pts_feats + enh_feat_cat
+        elif self.fusion_method == 'gating_v1':
+            gated_fuse_feat = self.trg_gating(
+                (pts_feats + enh_feat_cat).unsqueeze(0).permute(0, 2, 1),
+                enh_feat_cat.unsqueeze(0).permute(0, 2, 1))
+            gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
+            fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
         else:
             NotImplementedError('Invalid ACTR fusion method')
 

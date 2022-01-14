@@ -190,11 +190,6 @@ class SparseEncoder(nn.Module):
                 padding = tuple(self.encoder_paddings[i])[j]
                 # each stage started with a spconv layer
                 # except the first stage
-                if (self.fusion_layer
-                        is not None) and (i - 1 in self.fusion_pos) and (
-                            self.fusion_layer.fusion_method
-                            == 'concat') and (j == 0):
-                    in_channels = out_channels
                 if i != 0 and j == 0 and block_type == 'conv_module':
                     blocks_list.append(
                         make_block(in_channels,
@@ -232,6 +227,12 @@ class SparseEncoder(nn.Module):
                                    padding=padding,
                                    indice_key=f'subm{i + 1}',
                                    conv_type='SubMConv3d'))
+                if (self.fusion_layer
+                        is not None) and (i in self.fusion_pos) and (
+                            self.fusion_layer.fusion_method == 'concat'
+                            or self.fusion_layer.fusion_method
+                            == 'gating_v1') and (j == len(blocks) - 1):
+                    out_channels = out_channels * 2
                 in_channels = out_channels
             stage_name = f'encoder_layer{i + 1}'
             stage_layers = spconv.SparseSequential(*blocks_list)
