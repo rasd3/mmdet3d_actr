@@ -22,6 +22,7 @@ from .roiaware_pool3d import (RoIAwarePool3d, points_in_boxes_batch,
 from .sparse_block import (SparseBasicBlock, SparseBottleneck,
                            make_sparse_convmodule)
 from .voxel import DynamicScatter, Voxelization, dynamic_scatter, voxelization
+from .nms import nms_cpu, nms_gpu
 
 __all__ = [
     'nms', 'soft_nms', 'RoIAlign', 'roi_align', 'get_compiler_version',

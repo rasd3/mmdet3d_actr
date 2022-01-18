@@ -265,6 +265,17 @@ __global__ void boxes_overlap_kernel(const int num_a, const float *boxes_a,
   ans_overlap[a_idx * num_b + b_idx] = s_overlap;
 }
 
+__global__ void boxes_aligned_overlap_kernel(const int num_box, const float *boxes_a, const float *boxes_b, float *ans_overlap){
+    const int idx = blockIdx.x * THREADS_PER_BLOCK + threadIdx.x;
+    if (idx >= num_box){
+        return;
+    }
+    const float * cur_box_a = boxes_a + idx * 5;
+    const float * cur_box_b = boxes_b + idx * 5;
+    float s_overlap = box_overlap(cur_box_a, cur_box_b);
+    ans_overlap[idx] = s_overlap;
+}
+
 __global__ void boxes_iou_bev_kernel(const int num_a, const float *boxes_a,
                                      const int num_b, const float *boxes_b,
                                      float *ans_iou) {
@@ -279,6 +290,17 @@ __global__ void boxes_iou_bev_kernel(const int num_a, const float *boxes_a,
   const float *cur_box_b = boxes_b + b_idx * 5;
   float cur_iou_bev = iou_bev(cur_box_a, cur_box_b);
   ans_iou[a_idx * num_b + b_idx] = cur_iou_bev;
+}
+
+__global__ void boxes_aligned_iou_bev_kernel(const int num_box, const float *boxes_a, const float *boxes_b, float *ans_iou){
+    const int idx = blockIdx.x * THREADS_PER_BLOCK + threadIdx.x;
+    if (idx >= num_box){
+        return;
+    }
+    const float * cur_box_a = boxes_a + idx * 5;
+    const float * cur_box_b = boxes_b + idx * 5;
+    float cur_iou_bev = iou_bev(cur_box_a, cur_box_b);
+    ans_iou[idx] = cur_iou_bev;
 }
 
 __global__ void nms_kernel(const int boxes_num, const float nms_overlap_thresh,
@@ -410,6 +432,15 @@ void boxesoverlapLauncher(const int num_a, const float *boxes_a,
 #endif
 }
 
+void boxesalignedoverlapLauncher(const int num_box, const float *boxes_a, const float *boxes_b, float *ans_overlap){
+    dim3 blocks(DIVUP(num_box, THREADS_PER_BLOCK));  // blockIdx.x(col)
+    dim3 threads(THREADS_PER_BLOCK);
+    boxes_aligned_overlap_kernel<<<blocks, threads>>>(num_box, boxes_a, boxes_b, ans_overlap);
+#ifdef DEBUG
+    cudaDeviceSynchronize();  // for using printf in kernel function
+#endif
+}
+
 void boxesioubevLauncher(const int num_a, const float *boxes_a, const int num_b,
                          const float *boxes_b, float *ans_iou) {
   dim3 blocks(
@@ -419,6 +450,14 @@ void boxesioubevLauncher(const int num_a, const float *boxes_a, const int num_b,
 
   boxes_iou_bev_kernel<<<blocks, threads>>>(num_a, boxes_a, num_b, boxes_b,
                                             ans_iou);
+}
+
+void boxesalignedioubevLauncher(const int num_box, const float *boxes_a, const float *boxes_b, float *ans_iou){
+
+    dim3 blocks(DIVUP(num_box, THREADS_PER_BLOCK));  // blockIdx.x(col)
+    dim3 threads(THREADS_PER_BLOCK);
+
+    boxes_aligned_iou_bev_kernel<<<blocks, threads>>>(num_box, boxes_a, boxes_b, ans_iou);
 }
 
 void nmsLauncher(const float *boxes, unsigned long long *mask, int boxes_num,

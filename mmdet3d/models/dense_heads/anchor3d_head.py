@@ -8,6 +8,7 @@ from mmdet3d.core import (PseudoSampler, box3d_multiclass_nms, limit_period,
                           xywhr2xyxyr)
 from mmdet.core import (build_assigner, build_bbox_coder,
                         build_prior_generator, build_sampler, multi_apply)
+from mmdet3d.ops.iou3d.iou3d_utils import boxes_aligned_iou3d_gpu, boxes_iou3d_gpu, rotate_weighted_nms
 from mmdet.models import HEADS
 from ..builder import build_loss
 from .train_mixins import AnchorTrainMixin
@@ -39,7 +40,6 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         loss_bbox (dict): Config of localization loss.
         loss_dir (dict): Config of direction classifier loss.
     """
-
     def __init__(self,
                  num_classes,
                  in_channels,
@@ -47,6 +47,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
                  test_cfg,
                  feat_channels=256,
                  use_direction_classifier=True,
+                 use_iou_regressor=False,
                  anchor_generator=dict(
                      type='Anchor3DRangeGenerator',
                      range=[0, -39.68, -1.78, 69.12, 39.68, -1.78],
@@ -61,13 +62,14 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
                  dir_offset=0,
                  dir_limit_offset=1,
                  bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),
-                 loss_cls=dict(
-                     type='CrossEntropyLoss',
-                     use_sigmoid=True,
-                     loss_weight=1.0),
-                 loss_bbox=dict(
-                     type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
+                 loss_cls=dict(type='CrossEntropyLoss',
+                               use_sigmoid=True,
+                               loss_weight=1.0),
+                 loss_bbox=dict(type='SmoothL1Loss',
+                                beta=1.0 / 9.0,
+                                loss_weight=2.0),
                  loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2),
+                 loss_iou=None,
                  init_cfg=None):
         super().__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
@@ -75,6 +77,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         self.feat_channels = feat_channels
         self.diff_rad_by_sin = diff_rad_by_sin
         self.use_direction_classifier = use_direction_classifier
+        self.use_iou_regressor = use_iou_regressor
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.assigner_per_size = assigner_per_size
@@ -101,16 +104,21 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         self.loss_dir = build_loss(loss_dir)
         self.fp16_enabled = False
 
+        # build iou
+        if self.use_iou_regressor:
+            self.loss_iou = build_loss(loss_iou)
+
         self._init_layers()
         self._init_assigner_sampler()
 
         if init_cfg is None:
-            self.init_cfg = dict(
-                type='Normal',
-                layer='Conv2d',
-                std=0.01,
-                override=dict(
-                    type='Normal', name='conv_cls', std=0.01, bias_prob=0.01))
+            self.init_cfg = dict(type='Normal',
+                                 layer='Conv2d',
+                                 std=0.01,
+                                 override=dict(type='Normal',
+                                               name='conv_cls',
+                                               std=0.01,
+                                               bias_prob=0.01))
 
     def _init_assigner_sampler(self):
         """Initialize the target assigner and sampler of the head."""
@@ -137,6 +145,9 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         if self.use_direction_classifier:
             self.conv_dir_cls = nn.Conv2d(self.feat_channels,
                                           self.num_anchors * 2, 1)
+        if self.use_iou_regressor:
+            self.conv_iou_reg = nn.Conv2d(self.feat_channels, self.num_anchors,
+                                          1)
 
     def forward_single(self, x):
         """Forward function on a single-scale feature map.
@@ -151,9 +162,13 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         dir_cls_preds = None
+        iou_reg_preds = None
         if self.use_direction_classifier:
             dir_cls_preds = self.conv_dir_cls(x)
-        return cls_score, bbox_pred, dir_cls_preds
+        if self.use_iou_regressor:
+            iou_reg_preds = self.conv_iou_reg(x)
+
+        return cls_score, bbox_pred, dir_cls_preds, iou_reg_preds
 
     def forward(self, feats):
         """Forward pass.
@@ -183,20 +198,22 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         num_imgs = len(input_metas)
         # since feature map sizes of all images are the same, we only compute
         # anchors for one time
-        multi_level_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device=device)
+        multi_level_anchors = self.anchor_generator.grid_anchors(featmap_sizes,
+                                                                 device=device)
         anchor_list = [multi_level_anchors for _ in range(num_imgs)]
         return anchor_list
 
-    def loss_single(self, cls_score, bbox_pred, dir_cls_preds, labels,
-                    label_weights, bbox_targets, bbox_weights, dir_targets,
-                    dir_weights, num_total_samples):
+    def loss_single(self, cls_score, bbox_pred, dir_cls_preds, iou_reg_preds,
+                    labels, label_weights, bbox_targets, bbox_weights,
+                    dir_targets, dir_weights, num_total_samples, anchor_list):
         """Calculate loss of Single-level results.
 
         Args:
             cls_score (torch.Tensor): Class score in single-level.
             bbox_pred (torch.Tensor): Bbox prediction in single-level.
             dir_cls_preds (torch.Tensor): Predictions of direction class
+                in single-level.
+            iou_reg_preds (torch.Tensor): Predictions of iou prediction
                 in single-level.
             labels (torch.Tensor): Labels of class.
             label_weights (torch.Tensor): Weights of class loss.
@@ -217,8 +234,10 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         label_weights = label_weights.reshape(-1)
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
         assert labels.max().item() <= self.num_classes
-        loss_cls = self.loss_cls(
-            cls_score, labels, label_weights, avg_factor=num_total_samples)
+        loss_cls = self.loss_cls(cls_score,
+                                 labels,
+                                 label_weights,
+                                 avg_factor=num_total_samples)
 
         # regression loss
         bbox_pred = bbox_pred.permute(0, 2, 3,
@@ -245,6 +264,20 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             pos_dir_targets = dir_targets[pos_inds]
             pos_dir_weights = dir_weights[pos_inds]
 
+        if self.use_iou_regressor:
+            anchor_list = torch.cat(anchor_list)
+            pos_anchor = anchor_list[pos_inds]
+            iou_reg_preds = iou_reg_preds.permute(0, 2, 3, 1).reshape(-1, 1)
+            pos_iou_reg_preds = iou_reg_preds[pos_inds]
+            pos_iou_weights = pos_dir_weights.clone()
+            pos_bbox_preds_dec = self.bbox_coder.decode(
+                pos_anchor, pos_bbox_pred)
+            pos_bbox_targets = self.bbox_coder.decode(pos_anchor,
+                                                      pos_bbox_targets)
+            pos_iou_targets = boxes_aligned_iou3d_gpu(pos_bbox_preds_dec,
+                                                      pos_bbox_targets)
+            pos_iou_targets = pos_iou_targets * 2 - 1
+
         if num_pos > 0:
             code_weight = self.train_cfg.get('code_weight', None)
             if code_weight:
@@ -253,26 +286,32 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             if self.diff_rad_by_sin:
                 pos_bbox_pred, pos_bbox_targets = self.add_sin_difference(
                     pos_bbox_pred, pos_bbox_targets)
-            loss_bbox = self.loss_bbox(
-                pos_bbox_pred,
-                pos_bbox_targets,
-                pos_bbox_weights,
-                avg_factor=num_total_samples)
+            loss_bbox = self.loss_bbox(pos_bbox_pred,
+                                       pos_bbox_targets,
+                                       pos_bbox_weights,
+                                       avg_factor=num_total_samples)
 
             # direction classification loss
             loss_dir = None
             if self.use_direction_classifier:
-                loss_dir = self.loss_dir(
-                    pos_dir_cls_preds,
-                    pos_dir_targets,
-                    pos_dir_weights,
-                    avg_factor=num_total_samples)
+                loss_dir = self.loss_dir(pos_dir_cls_preds,
+                                         pos_dir_targets,
+                                         pos_dir_weights,
+                                         avg_factor=num_total_samples)
+
+            # iou regression loss
+            loss_iou = None
+            if self.use_iou_regressor:
+                loss_iou = self.loss_iou(pos_iou_reg_preds,
+                                         pos_iou_targets,
+                                         pos_iou_weights,
+                                         avg_factor=num_total_samples)
         else:
             loss_bbox = pos_bbox_pred.sum()
             if self.use_direction_classifier:
                 loss_dir = pos_dir_cls_preds.sum()
 
-        return loss_cls, loss_bbox, loss_dir
+        return loss_cls, loss_bbox, loss_dir, loss_iou
 
     @staticmethod
     def add_sin_difference(boxes1, boxes2):
@@ -303,6 +342,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
              cls_scores,
              bbox_preds,
              dir_cls_preds,
+             iou_reg_preds,
              gt_bboxes,
              gt_labels,
              input_metas,
@@ -333,8 +373,9 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         assert len(featmap_sizes) == self.anchor_generator.num_levels
         device = cls_scores[0].device
-        anchor_list = self.get_anchors(
-            featmap_sizes, input_metas, device=device)
+        anchor_list = self.get_anchors(featmap_sizes,
+                                       input_metas,
+                                       device=device)
         label_channels = self.cls_out_channels if self.use_sigmoid_cls else 1
         cls_reg_targets = self.anchor_target_3d(
             anchor_list,
@@ -351,33 +392,45 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
          dir_targets_list, dir_weights_list, num_total_pos,
          num_total_neg) = cls_reg_targets
-        num_total_samples = (
-            num_total_pos + num_total_neg if self.sampling else num_total_pos)
+        num_total_samples = (num_total_pos +
+                             num_total_neg if self.sampling else num_total_pos)
 
         # num_total_samples = None
-        losses_cls, losses_bbox, losses_dir = multi_apply(
+        losses_cls, losses_bbox, losses_dir, losses_iou = multi_apply(
             self.loss_single,
             cls_scores,
             bbox_preds,
             dir_cls_preds,
+            iou_reg_preds,
             labels_list,
             label_weights_list,
             bbox_targets_list,
             bbox_weights_list,
             dir_targets_list,
             dir_weights_list,
-            num_total_samples=num_total_samples)
-        return dict(
-            loss_cls=losses_cls, loss_bbox=losses_bbox, loss_dir=losses_dir)
+            num_total_samples=num_total_samples,
+            anchor_list=anchor_list,
+        )
+        if losses_iou[0] is not None:
+            return dict(loss_cls=losses_cls,
+                        loss_bbox=losses_bbox,
+                        loss_dir=losses_dir,
+                        loss_iou=losses_iou)
+        else:
+            return dict(loss_cls=losses_cls,
+                        loss_bbox=losses_bbox,
+                        loss_dir=losses_dir)
+
 
     def get_bboxes(self,
                    cls_scores,
                    bbox_preds,
                    dir_cls_preds,
+                   iou_reg_preds,
                    input_metas,
                    cfg=None,
                    rescale=False):
-        """Get bboxes of anchor head.
+        """Get bboxes of anchor ead.
 
         Args:
             cls_scores (list[torch.Tensor]): Multi-level class scores.
@@ -396,8 +449,8 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         num_levels = len(cls_scores)
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
         device = cls_scores[0].device
-        mlvl_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device=device)
+        mlvl_anchors = self.anchor_generator.grid_anchors(featmap_sizes,
+                                                          device=device)
         mlvl_anchors = [
             anchor.reshape(-1, self.box_code_size) for anchor in mlvl_anchors
         ]
@@ -413,11 +466,25 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             dir_cls_pred_list = [
                 dir_cls_preds[i][img_id].detach() for i in range(num_levels)
             ]
+            if self.use_iou_regressor:
+                iou_reg_pred_list = [
+                    iou_reg_preds[i][img_id].detach()
+                    for i in range(num_levels)
+                ]
+            else:
+                iou_reg_pred_list = [[] for i in range(num_levels)]
 
             input_meta = input_metas[img_id]
-            proposals = self.get_bboxes_single(cls_score_list, bbox_pred_list,
-                                               dir_cls_pred_list, mlvl_anchors,
-                                               input_meta, cfg, rescale)
+            if self.use_iou_regressor:
+                proposals = self.get_bboxes_single_iou(
+                    cls_score_list, bbox_pred_list, dir_cls_pred_list,
+                    iou_reg_pred_list, mlvl_anchors, input_meta, cfg, rescale)
+            else:
+                proposals = self.get_bboxes_single(cls_score_list,
+                                                   bbox_pred_list,
+                                                   dir_cls_pred_list,
+                                                   mlvl_anchors, input_meta,
+                                                   cfg, rescale)
             result_list.append(proposals)
         return result_list
 
@@ -506,8 +573,116 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         if bboxes.shape[0] > 0:
             dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,
                                    self.dir_limit_offset, np.pi)
-            bboxes[..., 6] = (
-                dir_rot + self.dir_offset +
-                np.pi * dir_scores.to(bboxes.dtype))
+            bboxes[..., 6] = (dir_rot + self.dir_offset +
+                              np.pi * dir_scores.to(bboxes.dtype))
+        bboxes = input_meta['box_type_3d'](bboxes, box_dim=self.box_code_size)
+        return bboxes, scores, labels
+
+    def get_bboxes_single_iou(self,
+                              cls_scores,
+                              bbox_preds,
+                              dir_cls_preds,
+                              iou_reg_preds,
+                              mlvl_anchors,
+                              input_meta,
+                              cfg=None,
+                              rescale=False):
+        """Get bboxes of single branch for iou preds & DI-NMS (from CIA-SSD)
+        Returns:
+            tuple: Contain predictions of single batch.
+
+                - bboxes (:obj:`BaseInstance3DBoxes`): Predicted 3d bboxes.
+                - scores (torch.Tensor): Class score of each bbox.
+                - labels (torch.Tensor): Label of each bbox.
+        """
+        cfg = self.test_cfg if cfg is None else cfg
+        assert len(cls_scores) == len(bbox_preds) == len(mlvl_anchors)
+        mlvl_bboxes = []
+        mlvl_scores = []
+        mlvl_labels = []
+        mlvl_dir_scores = []
+        mlvl_iou_preds = []
+        mlvl_selected_anchor = []
+        breakpoint()
+        for cls_score, bbox_pred, dir_cls_pred, iou_reg_pred, anchors in zip(
+                cls_scores, bbox_preds, dir_cls_preds, iou_reg_preds,
+                mlvl_anchors):
+            assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
+            assert cls_score.size()[-2:] == dir_cls_pred.size()[-2:]
+            dir_cls_pred = dir_cls_pred.permute(1, 2, 0).reshape(-1, 2)
+            dir_cls_score = torch.max(dir_cls_pred, dim=-1)[1]
+
+            cls_score = cls_score.permute(1, 2,
+                                          0).reshape(-1, self.num_classes)
+            cls_label = cls_score.max(1)[1]
+            if self.use_sigmoid_cls:
+                scores = cls_score.sigmoid()
+            else:
+                scores = cls_score.softmax(-1)
+            bbox_pred = bbox_pred.permute(1, 2,
+                                          0).reshape(-1, self.box_code_size)
+            if self.use_iou_regressor:
+                # follow cia-ssd
+                iou_reg_pred = iou_reg_pred.permute(1, 2, 0).reshape(-1, 1)
+                iou_reg_pred = (iou_reg_pred + 1) * 0.5
+
+            nms_pre = cfg.get('nms_pre', -1)
+            if nms_pre > 0 and scores.shape[0] > nms_pre:
+                if self.use_sigmoid_cls:
+                    max_scores, _ = scores.max(dim=1)
+                else:
+                    max_scores, _ = scores[:, :-1].max(dim=1)
+                _, topk_inds = max_scores.topk(nms_pre)
+                anchors = anchors[topk_inds, :]
+                bbox_pred = bbox_pred[topk_inds, :]
+                scores = scores[topk_inds, :]
+                scores *= torch.pow(iou_reg_pred[topk_inds], 4)
+                cls_label = cls_label[topk_inds]
+                dir_cls_score = dir_cls_score[topk_inds]
+                iou_reg_pred = iou_reg_pred[topk_inds]
+
+            bboxes = self.bbox_coder.decode(anchors, bbox_pred)
+            mlvl_bboxes.append(bboxes)
+            mlvl_scores.append(scores)
+            mlvl_dir_scores.append(dir_cls_score)
+            mlvl_iou_preds.append(iou_reg_pred)
+            mlvl_labels.append(cls_label)
+            mlvl_selected_anchor.append(anchors)
+
+        mlvl_bboxes = torch.cat(mlvl_bboxes)
+        #  mlvl_bboxes_for_nms = xywhr2xyxyr(input_meta['box_type_3d'](
+        #  mlvl_bboxes, box_dim=self.box_code_size).bev)
+        mlvl_bboxes_for_nms = input_meta['box_type_3d'](
+            mlvl_bboxes, box_dim=self.box_code_size).bev
+        mlvl_scores = torch.cat(mlvl_scores)
+        mlvl_dir_scores = torch.cat(mlvl_dir_scores)
+        mlvl_labels = torch.cat(mlvl_labels)
+        mlvl_iou_preds = torch.cat(mlvl_iou_preds)
+        mlvl_selected_anchor = torch.cat(mlvl_selected_anchor)
+        num_data = mlvl_labels.shape[0]
+
+        if self.use_sigmoid_cls:
+            # Add a dummy background class to the front when using sigmoid
+            padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
+            mlvl_scores = torch.cat([mlvl_scores, padding], dim=1)
+
+        score_thr = 0.01 # from CIA-SSD config
+        results = rotate_weighted_nms(mlvl_bboxes,
+                                      mlvl_bboxes_for_nms,
+                                      mlvl_dir_scores,
+                                      mlvl_labels,
+                                      mlvl_scores[torch.arange(num_data),
+                                                  mlvl_labels],
+                                      mlvl_iou_preds.squeeze(),
+                                      mlvl_selected_anchor,
+                                      iou_threshold=score_thr,
+                                      pre_max_size=cfg.nms_pre,
+                                      post_max_size=cfg.max_num)
+        bboxes, dir_scores, labels, scores = results
+        if bboxes.shape[0] > 0:
+            dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,
+                                   self.dir_limit_offset, np.pi)
+            bboxes[..., 6] = (dir_rot + self.dir_offset +
+                              np.pi * dir_scores.to(bboxes.dtype))
         bboxes = input_meta['box_type_3d'](bboxes, box_dim=self.box_code_size)
         return bboxes, scores, labels

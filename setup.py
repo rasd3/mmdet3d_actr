@@ -311,7 +311,15 @@ if __name__ == '__main__':
                 name='gather_points_ext',
                 module='mmdet3d.ops.gather_points',
                 sources=['src/gather_points.cpp'],
-                sources_cuda=['src/gather_points_cuda.cu'])
+                sources_cuda=['src/gather_points_cuda.cu']),
+            CUDAExtension(
+                name="mmdet3d.ops.nms.nms",
+                sources=[
+                    "mmdet3d/ops/nms/nms.cc",
+                    "mmdet3d/ops/nms/nms_kernel.cu",
+                ],
+                extra_compile_args={"cxx": ["-g"], "nvcc": ["-O2"]},
+            ),
         ],
         cmdclass={'build_ext': BuildExtension},
         zip_safe=False)
