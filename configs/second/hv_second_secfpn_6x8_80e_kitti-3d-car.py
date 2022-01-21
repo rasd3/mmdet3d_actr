@@ -28,3 +28,5 @@ model = dict(
         allowed_border=0,
         pos_weight=-1,
         debug=False))
+
+data = dict(samples_per_gpu=18, workers_per_gpu=4)

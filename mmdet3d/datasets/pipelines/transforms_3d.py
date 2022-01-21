@@ -1431,3 +1431,22 @@ class VoxelBasedPointSampler(object):
         repr_str += ' ' * indent + 'prev_voxel_generator=\n'
         repr_str += f'{_auto_indent(repr(self.prev_voxel_generator), 8)})'
         return repr_str
+
+@PIPELINES.register_module()
+class AuxPointLabeler(object):
+    def __init__(self, use_foreground_cls=False, use_center_reg=False):
+        self.use_foreground_cls = use_foreground_cls
+        self.use_center_reg = use_center_reg
+        
+    def __call__(self, results):
+        points = input_dict['points']
+        gt_bboxes_3d = input_dict['gt_bboxes_3d']
+
+        # avoid groundtruth being modified
+        gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
+        gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy()
+        foreground_masks = box_np_ops.points_in_rbbox(
+            points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
+
+        breakpoint()
+        abcd = 1
