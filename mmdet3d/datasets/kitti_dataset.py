@@ -64,15 +64,14 @@ class KittiDataset(Custom3DDataset):
                  filter_empty_gt=True,
                  test_mode=False,
                  pcd_limit_range=[0, -40, -3, 70.4, 40, 0.0]):
-        super().__init__(
-            data_root=data_root,
-            ann_file=ann_file,
-            pipeline=pipeline,
-            classes=classes,
-            modality=modality,
-            box_type_3d=box_type_3d,
-            filter_empty_gt=filter_empty_gt,
-            test_mode=test_mode)
+        super().__init__(data_root=data_root,
+                         ann_file=ann_file,
+                         pipeline=pipeline,
+                         classes=classes,
+                         modality=modality,
+                         box_type_3d=box_type_3d,
+                         filter_empty_gt=filter_empty_gt,
+                         test_mode=test_mode)
 
         self.split = split
         self.root_split = os.path.join(self.data_root, split)
@@ -122,15 +121,19 @@ class KittiDataset(Custom3DDataset):
         rect = info['calib']['R0_rect'].astype(np.float32)
         Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
         P2 = info['calib']['P2'].astype(np.float32)
+        P0 = info['calib']['P0'].astype(np.float32)
         lidar2img = P2 @ rect @ Trv2c
 
         pts_filename = self._get_pts_filename(sample_idx)
-        input_dict = dict(
-            sample_idx=sample_idx,
-            pts_filename=pts_filename,
-            img_prefix=None,
-            img_info=dict(filename=img_filename),
-            lidar2img=lidar2img)
+        input_dict = dict(sample_idx=sample_idx,
+                          pts_filename=pts_filename,
+                          img_prefix=None,
+                          img_info=dict(filename=img_filename,
+                                        cam_intrinsic=P2,
+                                        P0=P0,
+                                        P2=P2,
+                                        ),
+                          lidar2img=lidar2img)
 
         if not self.test_mode:
             annos = self.get_ann_info(index)
@@ -187,15 +190,16 @@ class KittiDataset(Custom3DDataset):
         gt_labels = np.array(gt_labels).astype(np.int64)
         gt_labels_3d = copy.deepcopy(gt_labels)
 
-        anns_results = dict(
-            gt_bboxes_3d=gt_bboxes_3d,
-            gt_labels_3d=gt_labels_3d,
-            bboxes=gt_bboxes,
-            labels=gt_labels,
-            gt_names=gt_names)
+        anns_results = dict(gt_bboxes_3d=gt_bboxes_3d,
+                            gt_labels_3d=gt_labels_3d,
+                            bboxes=gt_bboxes,
+                            labels=gt_labels,
+                            gt_names=gt_names)
         if 'gtimg_path' in annos:
-            anns_results.update({'gtimg_path': annos['gtimg_path'],
-                                 'gtimg_disc': annos['gtimg_disc']})
+            anns_results.update({
+                'gtimg_path': annos['gtimg_path'],
+                'gtimg_disc': annos['gtimg_disc']
+            })
         return anns_results
 
     def drop_arrays_by_name(self, gt_names, used_classes):
@@ -341,21 +345,22 @@ class KittiDataset(Custom3DDataset):
                 eval_types = ['bbox', 'bev', '3d']
                 if 'img' in name:
                     eval_types = ['bbox']
-                ap_result_str, ap_dict_ = kitti_eval(
-                    gt_annos,
-                    result_files_,
-                    self.CLASSES,
-                    eval_types=eval_types)
+                ap_result_str, ap_dict_ = kitti_eval(gt_annos,
+                                                     result_files_,
+                                                     self.CLASSES,
+                                                     eval_types=eval_types)
                 for ap_type, ap in ap_dict_.items():
                     ap_dict[f'{name}/{ap_type}'] = float('{:.4f}'.format(ap))
 
-                print_log(
-                    f'Results of {name}:\n' + ap_result_str, logger=logger)
+                print_log(f'Results of {name}:\n' + ap_result_str,
+                          logger=logger)
 
         else:
             if metric == 'img_bbox':
-                ap_result_str, ap_dict = kitti_eval(
-                    gt_annos, result_files, self.CLASSES, eval_types=['bbox'])
+                ap_result_str, ap_dict = kitti_eval(gt_annos,
+                                                    result_files,
+                                                    self.CLASSES,
+                                                    eval_types=['bbox'])
             else:
                 ap_result_str, ap_dict = kitti_eval(gt_annos, result_files,
                                                     self.CLASSES)
@@ -469,8 +474,9 @@ class KittiDataset(Custom3DDataset):
                                 anno['score'][idx]),
                             file=f)
 
-            annos[-1]['sample_idx'] = np.array(
-                [sample_idx] * len(annos[-1]['score']), dtype=np.int64)
+            annos[-1]['sample_idx'] = np.array([sample_idx] *
+                                               len(annos[-1]['score']),
+                                               dtype=np.int64)
 
             det_annos += annos
 
@@ -507,16 +513,15 @@ class KittiDataset(Custom3DDataset):
         for i, bboxes_per_sample in enumerate(
                 mmcv.track_iter_progress(net_outputs)):
             annos = []
-            anno = dict(
-                name=[],
-                truncated=[],
-                occluded=[],
-                alpha=[],
-                bbox=[],
-                dimensions=[],
-                location=[],
-                rotation_y=[],
-                score=[])
+            anno = dict(name=[],
+                        truncated=[],
+                        occluded=[],
+                        alpha=[],
+                        bbox=[],
+                        dimensions=[],
+                        location=[],
+                        rotation_y=[],
+                        score=[])
             sample_idx = self.data_infos[i]['image']['image_idx']
 
             num_example = 0
@@ -555,15 +560,14 @@ class KittiDataset(Custom3DDataset):
                 anno = {k: np.stack(v) for k, v in anno.items()}
                 annos.append(anno)
 
-            annos[-1]['sample_idx'] = np.array(
-                [sample_idx] * num_example, dtype=np.int64)
+            annos[-1]['sample_idx'] = np.array([sample_idx] * num_example,
+                                               dtype=np.int64)
             det_annos += annos
 
         if pklfile_prefix is not None:
             # save file in pkl format
-            pklfile_path = (
-                pklfile_prefix[:-4] if pklfile_prefix.endswith(
-                    ('.pkl', '.pickle')) else pklfile_prefix)
+            pklfile_path = (pklfile_prefix[:-4] if pklfile_prefix.endswith(
+                ('.pkl', '.pickle')) else pklfile_prefix)
             mmcv.dump(det_annos, pklfile_path)
 
         if submission_prefix is not None:
@@ -627,13 +631,12 @@ class KittiDataset(Custom3DDataset):
         box_preds.limit_yaw(offset=0.5, period=np.pi * 2)
 
         if len(box_preds) == 0:
-            return dict(
-                bbox=np.zeros([0, 4]),
-                box3d_camera=np.zeros([0, 7]),
-                box3d_lidar=np.zeros([0, 7]),
-                scores=np.zeros([0]),
-                label_preds=np.zeros([0, 4]),
-                sample_idx=sample_idx)
+            return dict(bbox=np.zeros([0, 4]),
+                        box3d_camera=np.zeros([0, 7]),
+                        box3d_lidar=np.zeros([0, 7]),
+                        scores=np.zeros([0]),
+                        label_preds=np.zeros([0, 4]),
+                        sample_idx=sample_idx)
 
         rect = info['calib']['R0_rect'].astype(np.float32)
         Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
@@ -670,27 +673,24 @@ class KittiDataset(Custom3DDataset):
                 label_preds=labels[valid_inds].numpy(),
                 sample_idx=sample_idx)
         else:
-            return dict(
-                bbox=np.zeros([0, 4]),
-                box3d_camera=np.zeros([0, 7]),
-                box3d_lidar=np.zeros([0, 7]),
-                scores=np.zeros([0]),
-                label_preds=np.zeros([0, 4]),
-                sample_idx=sample_idx)
+            return dict(bbox=np.zeros([0, 4]),
+                        box3d_camera=np.zeros([0, 7]),
+                        box3d_lidar=np.zeros([0, 7]),
+                        scores=np.zeros([0]),
+                        label_preds=np.zeros([0, 4]),
+                        sample_idx=sample_idx)
 
     def _build_default_pipeline(self):
         """Build the default pipeline for this dataset."""
         pipeline = [
-            dict(
-                type='LoadPointsFromFile',
-                coord_type='LIDAR',
-                load_dim=4,
-                use_dim=4,
-                file_client_args=dict(backend='disk')),
-            dict(
-                type='DefaultFormatBundle3D',
-                class_names=self.CLASSES,
-                with_label=False),
+            dict(type='LoadPointsFromFile',
+                 coord_type='LIDAR',
+                 load_dim=4,
+                 use_dim=4,
+                 file_client_args=dict(backend='disk')),
+            dict(type='DefaultFormatBundle3D',
+                 class_names=self.CLASSES,
+                 with_label=False),
             dict(type='Collect3D', keys=['points'])
         ]
         if self.modality['use_camera']:
@@ -735,16 +735,15 @@ class KittiDataset(Custom3DDataset):
                 img = img.numpy()
                 # need to transpose channel to first dim
                 img = img.transpose(1, 2, 0)
-                show_pred_bboxes = LiDARInstance3DBoxes(
-                    pred_bboxes, origin=(0.5, 0.5, 0))
-                show_gt_bboxes = LiDARInstance3DBoxes(
-                    gt_bboxes, origin=(0.5, 0.5, 0))
-                show_multi_modality_result(
-                    img,
-                    show_gt_bboxes,
-                    show_pred_bboxes,
-                    img_metas['lidar2img'],
-                    out_dir,
-                    file_name,
-                    box_mode='lidar',
-                    show=show)
+                show_pred_bboxes = LiDARInstance3DBoxes(pred_bboxes,
+                                                        origin=(0.5, 0.5, 0))
+                show_gt_bboxes = LiDARInstance3DBoxes(gt_bboxes,
+                                                      origin=(0.5, 0.5, 0))
+                show_multi_modality_result(img,
+                                           show_gt_bboxes,
+                                           show_pred_bboxes,
+                                           img_metas['lidar2img'],
+                                           out_dir,
+                                           file_name,
+                                           box_mode='lidar',
+                                           show=show)

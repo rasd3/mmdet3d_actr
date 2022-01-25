@@ -296,6 +296,7 @@ class MVXTwoStageDetector(Base3DDetector):
         Returns:
             dict: Losses of different branches.
         """
+        breakpoint()
         img_feats, pts_feats = self.extract_feat(
             points, img=img, img_metas=img_metas)
         #  self.feat_visualize(img_feats[0], img_metas)

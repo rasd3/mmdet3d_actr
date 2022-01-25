@@ -92,6 +92,8 @@ class LoadImageFromFileMono3D(LoadImageFromFile):
         """
         super().__call__(results)
         results['cam2img'] = results['img_info']['cam_intrinsic']
+        results['P2'] = results['img_info']['P2']
+        results['P0'] = results['img_info']['P0']
         return results
 
 
@@ -543,8 +545,17 @@ class LoadAnnotations3D(LoadAnnotations):
         Returns:
             dict: The dict containing loaded 2.5D bounding box annotations.
         """
-        results['centers2d'] = results['ann_info']['centers2d']
-        results['depths'] = results['ann_info']['depths']
+        if 'mono3d_centers2d' in results['ann_info']:
+            results['gt_bboxes_3d_cam'] = results['ann_info']['mono3d_gt_bboxes_3d']
+            results['gt_bboxes_cam'] = results['ann_info']['mono3d_bboxes']
+            results['centers2d'] = results['ann_info']['mono3d_centers2d']
+            results['depths'] = results['ann_info']['mono3d_depths']
+
+            results['bbox3d_fields'].append('gt_bboxes_3d_cam')
+            results['bbox_fields'].append('gt_bboxes_cam')
+        else:
+            results['centers2d'] = results['ann_info']['centers2d']
+            results['depths'] = results['ann_info']['depths']
         return results
 
     def _load_labels_3d(self, results):

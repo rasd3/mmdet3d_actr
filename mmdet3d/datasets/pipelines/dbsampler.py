@@ -277,7 +277,7 @@ class DataBaseSampler(object):
         for i in range(gt_num, gts_num):
             samp = sampled_dict[i - gt_num]
             gts_img.append(cv2.imread(samp['img_path']))
-            gts_coor.append(samp['img_bbox_coor'][::-1][:2])
+            gts_coor.append(samp['img_bbox_coor'][:2][::-1])
         for i in range(gt_num, gts_num):
             samp = sampled_dict[i - gt_num]
             mask = img2mask(gts_img[i])
@@ -317,6 +317,7 @@ class DataBaseSampler(object):
         gt_bboxes,
         gt_labels,
         gt_bboxes_2d=None,
+        gt_bboxes_3d_cam=None,
         sample_idx=None,
         img=None,
         img_dict=None,
@@ -355,6 +356,9 @@ class DataBaseSampler(object):
         sampled_gt_bboxes = []
         avoid_coll_boxes = gt_bboxes
 
+        sampled_gt_bboxes_cam = []
+        avoid_coll_boxes_cam = gt_bboxes_3d_cam.tensor.numpy()
+
         sampled_gt_bboxes_2d = []
         avoid_coll_boxes_2d = gt_bboxes_2d
 
@@ -374,6 +378,17 @@ class DataBaseSampler(object):
                     else:
                         sampled_gt_box = np.stack(
                             [s['box3d_lidar'] for s in sampled_cls], axis=0)
+
+                    if gt_bboxes_3d_cam is not None:
+                        if len(sampled_cls) == 1:
+                            sampled_gt_box_cam = sampled_cls[0]['box3d_cam'].tensor.numpy()[
+                                np.newaxis, ...]
+                        else:
+                            sampled_gt_box_cam = np.stack(
+                                [s['box3d_cam'].tensor.numpy() for s in sampled_cls], axis=0)
+                        sampled_gt_bboxes_cam += [sampled_gt_box_cam]
+                        avoid_coll_boxes_cam = np.concatenate(
+                            [avoid_coll_boxes_cam, sampled_gt_box_cam[:, 0]], axis=0)
 
                     sampled_gt_bboxes += [sampled_gt_box]
                     avoid_coll_boxes = np.concatenate(
@@ -426,6 +441,9 @@ class DataBaseSampler(object):
                                       avoid_coll_boxes, sampled_gt_bboxes_2d,
                                       sampled, img_dict)
                 ret.update({'img': img, 'gt_bboxes_2d': sampled_gt_bboxes_2d})
+            if gt_bboxes_3d_cam is not None:
+                sampled_gt_bboxes_cam = np.concatenate(sampled_gt_bboxes_cam)
+                ret.update({'gt_bboxes_3d_cam': sampled_gt_bboxes_cam})
 
         return ret
 

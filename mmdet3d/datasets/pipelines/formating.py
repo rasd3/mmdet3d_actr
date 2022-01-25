@@ -27,7 +27,6 @@ class DefaultFormatBundle(object):
     - gt_semantic_seg: (1)unsqueeze dim-0 (2)to tensor, \
                        (3)to DataContainer (stack=True)
     """
-
     def __init__(self, ):
         return
 
@@ -51,9 +50,9 @@ class DefaultFormatBundle(object):
                 img = np.ascontiguousarray(results['img'].transpose(2, 0, 1))
                 results['img'] = DC(to_tensor(img), stack=True)
         for key in [
-                'proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels',
-                'gt_labels_3d', 'attr_labels', 'pts_instance_mask',
-                'pts_semantic_mask', 'centers2d', 'depths'
+                'proposals', 'gt_bboxes', 'gt_bboxes_cam', 'gt_bboxes_ignore',
+                'gt_labels', 'gt_labels_3d', 'attr_labels',
+                'pts_instance_mask', 'pts_semantic_mask', 'centers2d', 'depths'
         ]:
             if key not in results:
                 continue
@@ -63,17 +62,25 @@ class DefaultFormatBundle(object):
                 results[key] = DC(to_tensor(results[key]))
         if 'gt_bboxes_3d' in results:
             if isinstance(results['gt_bboxes_3d'], BaseInstance3DBoxes):
-                results['gt_bboxes_3d'] = DC(
-                    results['gt_bboxes_3d'], cpu_only=True)
+                results['gt_bboxes_3d'] = DC(results['gt_bboxes_3d'],
+                                             cpu_only=True)
             else:
-                results['gt_bboxes_3d'] = DC(
-                    to_tensor(results['gt_bboxes_3d']))
+                results['gt_bboxes_3d'] = DC(to_tensor(
+                    results['gt_bboxes_3d']))
+        if 'gt_bboxes_3d_cam' in results:
+            if isinstance(results['gt_bboxes_3d_cam'], BaseInstance3DBoxes):
+                results['gt_bboxes_3d_cam'] = DC(results['gt_bboxes_3d_cam'],
+                                                 cpu_only=True)
+            else:
+                results['gt_bboxes_3d_cam'] = DC(
+                    to_tensor(results['gt_bboxes_3d_cam']))
 
         if 'gt_masks' in results:
             results['gt_masks'] = DC(results['gt_masks'], cpu_only=True)
         if 'gt_semantic_seg' in results:
-            results['gt_semantic_seg'] = DC(
-                to_tensor(results['gt_semantic_seg'][None, ...]), stack=True)
+            results['gt_semantic_seg'] = DC(to_tensor(
+                results['gt_semantic_seg'][None, ...]),
+                                            stack=True)
 
         return results
 
@@ -129,11 +136,10 @@ class Collect3D(object):
             'box_type_3d', 'img_norm_cfg', 'pcd_trans',
             'sample_idx', 'pcd_scale_factor', 'pcd_rotation', 'pts_filename')
     """
-
     def __init__(self,
                  keys,
                  meta_keys=('filename', 'ori_shape', 'img_shape', 'lidar2img',
-                            'depth2img', 'cam2img', 'pad_shape',
+                            'depth2img', 'cam2img', 'pad_shape', 'P0', 'P2',
                             'scale_factor', 'flip', 'pcd_horizontal_flip',
                             'pcd_vertical_flip', 'box_mode_3d', 'box_type_3d',
                             'img_norm_cfg', 'pcd_trans', 'sample_idx',
@@ -186,7 +192,6 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
     - gt_bboxes_ignore: (1)to tensor, (2)to DataContainer
     - gt_labels: (1)to tensor, (2)to DataContainer
     """
-
     def __init__(self, class_names, with_gt=True, with_label=True):
         super(DefaultFormatBundle3D, self).__init__()
         self.class_names = class_names
@@ -207,6 +212,10 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
         if 'points' in results:
             assert isinstance(results['points'], BasePoints)
             results['points'] = DC(results['points'].tensor)
+        if 'gt_foreground_pts' in results:
+            results['gt_foreground_pts'] = DC(results['gt_foreground_pts'])
+        if 'gt_center_pts' in results:
+            results['gt_center_pts'] = DC(results['gt_center_pts'])
 
         for key in ['voxels', 'coors', 'voxel_centers', 'num_points']:
             if key not in results:

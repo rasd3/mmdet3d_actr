@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import torch
 import numpy as np
 import cv2
 import warnings
@@ -26,7 +27,6 @@ class RandomDropPointsColor(object):
         drop_ratio (float): The probability of dropping point colors.
             Defaults to 0.2.
     """
-
     def __init__(self, drop_ratio=0.2):
         assert isinstance(drop_ratio, (int, float)) and 0 <= drop_ratio <= 1, \
             f'invalid drop_ratio value {drop_ratio}'
@@ -82,14 +82,13 @@ class RandomFlip3D(RandomFlip):
         flip_ratio_bev_vertical (float, optional): The flipping probability
             in vertical direction. Defaults to 0.0.
     """
-
     def __init__(self,
                  sync_2d=True,
                  flip_ratio_bev_horizontal=0.0,
                  flip_ratio_bev_vertical=0.0,
                  **kwargs):
-        super(RandomFlip3D, self).__init__(
-            flip_ratio=flip_ratio_bev_horizontal, **kwargs)
+        super(RandomFlip3D,
+              self).__init__(flip_ratio=flip_ratio_bev_horizontal, **kwargs)
         self.sync_2d = sync_2d
         self.flip_ratio_bev_vertical = flip_ratio_bev_vertical
         if flip_ratio_bev_horizontal is not None:
@@ -115,13 +114,15 @@ class RandomFlip3D(RandomFlip):
         assert direction in ['horizontal', 'vertical']
         if len(input_dict['bbox3d_fields']) == 0:  # test mode
             input_dict['bbox3d_fields'].append('empty_box3d')
-            input_dict['empty_box3d'] = input_dict['box_type_3d'](
-                np.array([], dtype=np.float32))
-        assert len(input_dict['bbox3d_fields']) == 1
+            input_dict['empty_box3d'] = input_dict['box_type_3d'](np.array(
+                [], dtype=np.float32))
+        #  assert len(input_dict['bbox3d_fields']) == 1
+        flip_flag = False
         for key in input_dict['bbox3d_fields']:
-            if 'points' in input_dict:
+            if 'points' in input_dict and flip_flag is False:
                 input_dict['points'] = input_dict[key].flip(
                     direction, points=input_dict['points'])
+                flip_flag = True
             else:
                 input_dict[key].flip(direction)
         if 'centers2d' in input_dict:
@@ -205,7 +206,6 @@ class RandomJitterPoints(object):
             because we don't transform ground-truth bboxes accordingly.
         For similar transform in detection task, please refer to `ObjectNoise`.
     """
-
     def __init__(self,
                  jitter_std=[0.01, 0.01, 0.01],
                  clip_range=[-0.05, 0.05]):
@@ -262,7 +262,6 @@ class ObjectSample(object):
             This should be true when applying multi-modality cut-and-paste.
             Defaults to False.
     """
-
     def __init__(self, db_sampler, sample_2d=False):
         self.sampler_cfg = db_sampler
         self.sample_2d = sample_2d
@@ -311,12 +310,16 @@ class ObjectSample(object):
                 'path': input_dict['gt_bboxes_gtimg_path'],
                 'disc': input_dict['gt_bboxes_gtimg_disc']
             }
+            gt_bboxes_3d_cam = None
+            if 'gt_bboxes_3d_cam' in input_dict:
+                gt_bboxes_3d_cam = input_dict['gt_bboxes_3d_cam']
             # Assume for now 3D & 2D bboxes are the same
             #  cv2.imwrite('img_before.png', img)
             sampled_dict = self.db_sampler.sample_all(
                 gt_bboxes_3d.tensor.numpy(),
                 gt_labels_3d,
                 gt_bboxes_2d=gt_bboxes_2d,
+                gt_bboxes_3d_cam=gt_bboxes_3d_cam,
                 sample_idx=input_dict['sample_idx'],
                 img=img,
                 img_dict=img_dict)
@@ -347,6 +350,12 @@ class ObjectSample(object):
 
                 input_dict['gt_bboxes'] = gt_bboxes_2d
                 input_dict['img'] = sampled_dict['img']
+            if 'gt_bboxes_3d_cam' in input_dict:
+                sampled_gt_bboxes_3d_cam = sampled_dict['gt_bboxes_3d']
+                gt_bboxes_3d_cam = gt_bboxes_3d_cam.new_box(
+                    np.concatenate(
+                        [gt_bboxes_3d_cam.tensor.numpy(), sampled_gt_bboxes_3d_cam]))
+                input_dict['gt_bboxes_3d_cam'] = gt_bboxes_3d_cam
 
         input_dict['gt_bboxes_3d'] = gt_bboxes_3d
         input_dict['gt_labels_3d'] = gt_labels_3d.astype(np.long)
@@ -382,7 +391,6 @@ class ObjectNoise(object):
         num_try (int, optional): Number of times to try if the noise applied is
             invalid. Defaults to 100.
     """
-
     def __init__(self,
                  translation_std=[0.25, 0.25, 0.25],
                  global_rot_range=[0.0, 0.0],
@@ -410,13 +418,12 @@ class ObjectNoise(object):
         numpy_box = gt_bboxes_3d.tensor.numpy()
         numpy_points = points.tensor.numpy()
 
-        noise_per_object_v3_(
-            numpy_box,
-            numpy_points,
-            rotation_perturb=self.rot_range,
-            center_noise_std=self.translation_std,
-            global_random_rot_range=self.global_rot_range,
-            num_try=self.num_try)
+        noise_per_object_v3_(numpy_box,
+                             numpy_points,
+                             rotation_perturb=self.rot_range,
+                             center_noise_std=self.translation_std,
+                             global_random_rot_range=self.global_rot_range,
+                             num_try=self.num_try)
 
         input_dict['gt_bboxes_3d'] = gt_bboxes_3d.new_box(numpy_box)
         input_dict['points'] = points.new_point(numpy_points)
@@ -446,7 +453,6 @@ class GlobalAlignment(object):
         For example, ScanNet 3D detection task uses aligned ground-truth \
             bounding boxes for evaluation.
     """
-
     def __init__(self, rotation_axis):
         self.rotation_axis = rotation_axis
 
@@ -536,7 +542,6 @@ class GlobalRotScaleTrans(object):
             (the fourth dimension of indoor points) when scaling.
             Defaults to False.
     """
-
     def __init__(self,
                  rot_range=[-0.78539816, 0.78539816],
                  scale_ratio_range=[0.95, 1.05],
@@ -604,12 +609,17 @@ class GlobalRotScaleTrans(object):
             return
 
         # rotate points with bboxes
+        rot_flag = False
         for key in input_dict['bbox3d_fields']:
             if len(input_dict[key].tensor) != 0:
-                points, rot_mat_T = input_dict[key].rotate(
-                    noise_rotation, input_dict['points'])
-                input_dict['points'] = points
-                input_dict['pcd_rotation'] = rot_mat_T
+                if rot_flag:
+                    input_dict[key].rotate(noise_rotation)
+                else:
+                    rot_flag = True
+                    points, rot_mat_T = input_dict[key].rotate(
+                        noise_rotation, input_dict['points'])
+                    input_dict['points'] = points
+                    input_dict['pcd_rotation'] = rot_mat_T
 
     def _scale_bbox_points(self, input_dict):
         """Private function to scale bounding boxes and points.
@@ -686,7 +696,6 @@ class GlobalRotScaleTrans(object):
 @PIPELINES.register_module()
 class PointShuffle(object):
     """Shuffle input points."""
-
     def __call__(self, input_dict):
         """Call function to shuffle points.
 
@@ -722,7 +731,6 @@ class ObjectRangeFilter(object):
     Args:
         point_cloud_range (list[float]): Point cloud range.
     """
-
     def __init__(self, point_cloud_range):
         self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
 
@@ -774,7 +782,6 @@ class PointsRangeFilter(object):
     Args:
         point_cloud_range (list[float]): Point cloud range.
     """
-
     def __init__(self, point_cloud_range):
         self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
 
@@ -819,7 +826,6 @@ class ObjectNameFilter(object):
     Args:
         classes (list[str]): List of class names to be kept for training.
     """
-
     def __init__(self, classes):
         self.classes = classes
         self.labels = list(range(len(self.classes)))
@@ -863,7 +869,6 @@ class PointSample(object):
         replace (bool, optional): Whether the sampling is with or without
             replacement. Defaults to False.
     """
-
     def __init__(self, num_points, sample_range=None, replace=False):
         self.num_points = num_points
         self.sample_range = sample_range
@@ -903,8 +908,9 @@ class PointSample(object):
             near_inds = np.where(depth <= sample_range)[0]
             # in case there are too many far points
             if len(far_inds) > num_samples:
-                far_inds = np.random.choice(
-                    far_inds, num_samples, replace=False)
+                far_inds = np.random.choice(far_inds,
+                                            num_samples,
+                                            replace=False)
             point_range = near_inds
             num_samples -= len(far_inds)
         choices = np.random.choice(point_range, num_samples, replace=replace)
@@ -933,12 +939,11 @@ class PointSample(object):
             from mmdet3d.core.points import CameraPoints
             assert isinstance(points, CameraPoints), \
                 'Sampling based on distance is only appliable for CAMERA coord'
-        points, choices = self._points_random_sampling(
-            points,
-            self.num_points,
-            self.sample_range,
-            self.replace,
-            return_choices=True)
+        points, choices = self._points_random_sampling(points,
+                                                       self.num_points,
+                                                       self.sample_range,
+                                                       self.replace,
+                                                       return_choices=True)
         results['points'] = points
 
         pts_instance_mask = results.get('pts_instance_mask', None)
@@ -974,7 +979,6 @@ class IndoorPointSample(PointSample):
     Args:
         num_points (int): Number of points to be sampled.
     """
-
     def __init__(self, *args, **kwargs):
         warnings.warn(
             'IndoorPointSample is deprecated in favor of PointSample')
@@ -1019,7 +1023,6 @@ class IndoorPatchPointSample(object):
             inference process in testing, please refer to the `slide_inference`
             function of `EncoderDecoder3D` class.
     """
-
     def __init__(self,
                  num_points,
                  block_size=1.5,
@@ -1080,8 +1083,9 @@ class IndoorPatchPointSample(object):
                 ]))
 
         points = np.concatenate([centered_coords, attributes], axis=1)
-        points = point_type(
-            points, points_dim=points.shape[1], attribute_dims=attribute_dims)
+        points = point_type(points,
+                            points_dim=points.shape[1],
+                            attribute_dims=attribute_dims)
 
         return points
 
@@ -1121,10 +1125,9 @@ class IndoorPatchPointSample(object):
                 [self.block_size / 2.0, self.block_size / 2.0, 0.0])
             cur_max[2] = coord_max[2]
             cur_min[2] = coord_min[2]
-            cur_choice = np.sum(
-                (coords >= (cur_min - self.enlarge_size)) *
-                (coords <= (cur_max + self.enlarge_size)),
-                axis=1) == 3
+            cur_choice = np.sum((coords >= (cur_min - self.enlarge_size)) *
+                                (coords <= (cur_max + self.enlarge_size)),
+                                axis=1) == 3
 
             if not cur_choice.any():  # no points in this patch
                 continue
@@ -1132,10 +1135,10 @@ class IndoorPatchPointSample(object):
             cur_coords = coords[cur_choice, :]
             cur_sem_mask = sem_mask[cur_choice]
             point_idxs = np.where(cur_choice)[0]
-            mask = np.sum(
-                (cur_coords >= (cur_min - self.eps)) * (cur_coords <=
-                                                        (cur_max + self.eps)),
-                axis=1) == 3
+            mask = np.sum((cur_coords >=
+                           (cur_min - self.eps)) * (cur_coords <=
+                                                    (cur_max + self.eps)),
+                          axis=1) == 3
 
             # two criteria for patch sampling, adopted from PointNet++
             # 1. selected patch should contain enough unique points
@@ -1167,8 +1170,9 @@ class IndoorPatchPointSample(object):
         # sample idx to `self.num_points`
         if point_idxs.size >= self.num_points:
             # no duplicate in sub-sampling
-            choices = np.random.choice(
-                point_idxs, self.num_points, replace=False)
+            choices = np.random.choice(point_idxs,
+                                       self.num_points,
+                                       replace=False)
         else:
             # do not use random choice here to avoid some points not counted
             dup = np.random.choice(point_idxs.size,
@@ -1233,7 +1237,6 @@ class BackgroundPointsFilter(object):
     Args:
         bbox_enlarge_range (tuple[float], float): Bbox enlarge range.
     """
-
     def __init__(self, bbox_enlarge_range):
         assert (is_tuple_of(bbox_enlarge_range, float)
                 and len(bbox_enlarge_range) == 3) \
@@ -1242,8 +1245,8 @@ class BackgroundPointsFilter(object):
 
         if isinstance(bbox_enlarge_range, float):
             bbox_enlarge_range = [bbox_enlarge_range] * 3
-        self.bbox_enlarge_range = np.array(
-            bbox_enlarge_range, dtype=np.float32)[np.newaxis, :]
+        self.bbox_enlarge_range = np.array(bbox_enlarge_range,
+                                           dtype=np.float32)[np.newaxis, :]
 
     def __call__(self, input_dict):
         """Call function to filter points by the range.
@@ -1265,8 +1268,9 @@ class BackgroundPointsFilter(object):
         enlarged_gt_bboxes_3d = gt_bboxes_3d_np.copy()
         enlarged_gt_bboxes_3d[:, 3:6] += self.bbox_enlarge_range
         points_numpy = points.tensor.clone().numpy()
-        foreground_masks = box_np_ops.points_in_rbbox(
-            points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
+        foreground_masks = box_np_ops.points_in_rbbox(points_numpy,
+                                                      gt_bboxes_3d_np,
+                                                      origin=(0.5, 0.5, 0.5))
         enlarge_foreground_masks = box_np_ops.points_in_rbbox(
             points_numpy, enlarged_gt_bboxes_3d, origin=(0.5, 0.5, 0.5))
         foreground_masks = foreground_masks.max(1)
@@ -1303,7 +1307,6 @@ class VoxelBasedPointSampler(object):
         time_dim (int): Index that indicate the time dimention
             for input points.
     """
-
     def __init__(self, cur_sweep_cfg, prev_sweep_cfg=None, time_dim=3):
         self.cur_voxel_generator = VoxelGenerator(**cur_sweep_cfg)
         self.cur_voxel_num = self.cur_voxel_generator._max_voxels
@@ -1413,7 +1416,6 @@ class VoxelBasedPointSampler(object):
 
     def __repr__(self):
         """str: Return a string that describes the module."""
-
         def _auto_indent(repr_str, indent):
             repr_str = repr_str.split('\n')
             repr_str = [' ' * indent + t + '\n' for t in repr_str]
@@ -1432,21 +1434,37 @@ class VoxelBasedPointSampler(object):
         repr_str += f'{_auto_indent(repr(self.prev_voxel_generator), 8)})'
         return repr_str
 
+
 @PIPELINES.register_module()
 class AuxPointLabeler(object):
-    def __init__(self, use_foreground_cls=False, use_center_reg=False):
-        self.use_foreground_cls = use_foreground_cls
-        self.use_center_reg = use_center_reg
-        
-    def __call__(self, results):
-        points = input_dict['points']
-        gt_bboxes_3d = input_dict['gt_bboxes_3d']
+    def __init__(self,
+                 use_foreground_pts=False,
+                 use_center_pts=False,
+                 use_foreground_img=False,
+                 use_center_img=False):
+        self.use_foreground_pts = use_foreground_pts
+        self.use_center_pts = use_center_pts
+        self.use_foreground_img = use_foreground_img
+        self.use_center_img = use_center_img
 
-        # avoid groundtruth being modified
+    def __call__(self, results):
+        points = results['points']
+        gt_bboxes_3d = results['gt_bboxes_3d']
+        num_pts = points.shape[0]
+
         gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
         gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy()
-        foreground_masks = box_np_ops.points_in_rbbox(
-            points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
+        points_numpy = points.tensor.clone().numpy()
+        foreground_masks = box_np_ops.points_in_rbbox(points_numpy,
+                                                      gt_bboxes_3d_np,
+                                                      origin=(0.5, 0.5, 0.5))
+        results['gt_foreground_pts'] = torch.tensor(
+            foreground_masks.sum(1) != 0)
 
-        breakpoint()
-        abcd = 1
+        gt_center_pts = np.zeros((num_pts, 3))
+        for idx, gt_bbox in enumerate(gt_bboxes_3d_np):
+            gt_center_pts[foreground_masks[:, idx]] = gt_bboxes_3d_np[
+                idx, :3] - points_numpy[foreground_masks[:, idx]][:, :3]
+        results['gt_center_pts'] = torch.tensor(gt_center_pts)
+
+        return results

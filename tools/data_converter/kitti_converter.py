@@ -422,6 +422,10 @@ def get_2d_boxes(info, occluded, mono3d=True):
         loc = ann_rec['location'][np.newaxis, :]
         dim = ann_rec['dimensions'][np.newaxis, :]
         rot = ann_rec['rotation_y'][np.newaxis, np.newaxis]
+        if (dim == np.array([[
+                3.89, 1.5, 1.62
+        ]])).sum() == 3 and (rot == np.array([[-1.62]])).sum() == 1:
+            breakpoint()
         # transform the center from [0.5, 1.0, 0.5] to [0.5, 0.5, 0.5]
         dst = np.array([0.5, 0.5, 0.5])
         src = np.array([0.5, 1.0, 0.5])

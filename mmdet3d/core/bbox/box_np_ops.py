@@ -596,7 +596,7 @@ def overlap_jit(boxes, mode='iou', eps=0.0):
                     min(boxes[n, 3], boxes[k, 3]) -
                     max(boxes[n, 1], boxes[k, 1]) + eps)
                 if ih > 0:
-                    overlaps[n, k] = iw * ih / box_area
+                    overlaps[k, n] = iw * ih / box_area
     return overlaps
 
 

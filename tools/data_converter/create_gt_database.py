@@ -119,7 +119,8 @@ def create_groundtruth_database(dataset_class_name,
                                 lidar_only=False,
                                 bev_only=False,
                                 coors_range=None,
-                                with_mask=False):
+                                with_mask=False,
+                                for_parallel=False):
     """Given the raw data, generate the ground truth database.
 
     Args:
@@ -142,8 +143,16 @@ def create_groundtruth_database(dataset_class_name,
             Default: False.
     """
     print(f'Create GT Database of {dataset_class_name}')
-    dataset_cfg = dict(
-        type=dataset_class_name, data_root=data_path, ann_file=info_path)
+    if for_parallel:
+        dataset_cfg = dict(
+            #  type=dataset_class_name, data_root=data_path, ann_file=info_path)
+            type='KittiParallelDataset',
+            data_root=data_path,
+            ann_file=info_path,
+            info_file='data/kitti/kitti_infos_train_mono3d.coco.json')
+    else:
+        dataset_cfg = dict(
+            type=dataset_class_name, data_root=data_path, ann_file=info_path)
     if dataset_class_name == 'KittiDataset':
         file_client_args = dict(backend='disk')
         dataset_cfg.update(
@@ -166,6 +175,7 @@ def create_groundtruth_database(dataset_class_name,
                     type='LoadAnnotations3D',
                     with_bbox_3d=True,
                     with_label_3d=True,
+                    with_bbox_depth=for_parallel,  # add for parallel
                     file_client_args=file_client_args)
             ])
 
@@ -241,6 +251,10 @@ def create_groundtruth_database(dataset_class_name,
         image_idx = example['sample_idx']
         points = example['points'].tensor.numpy()
         gt_boxes_3d = annos['gt_bboxes_3d'].tensor.numpy()
+        if for_parallel:
+            p_cnt = 0
+            kitti_categories = ('Pedestrian', 'Cyclist', 'Car')
+            gt_boxes_3d_cam = annos['mono3d_gt_bboxes_3d']
         names = annos['gt_names']
         group_dict = dict()
         if 'group_ids' in annos:
@@ -316,6 +330,19 @@ def create_groundtruth_database(dataset_class_name,
                     'num_points_in_gt': gt_points.shape[0],
                     'difficulty': difficulty[i],
                 }
+                if for_parallel:
+                    if names[i] in kitti_categories:
+                        if (gt_boxes_3d_cam[p_cnt].convert_to(0).tensor[0, -3:].
+                                numpy() == gt_boxes_3d[i][-3:]).sum() != 3:
+                            print('1')
+                            continue
+                        try:
+                            db_info.update(
+                                {'box3d_cam': gt_boxes_3d_cam[p_cnt]})
+                            p_cnt += 1
+                        except:
+                            breakpoint()
+                            abd = 1
                 local_group_id = group_ids[i]
                 # if local_group_id >= 0:
                 if local_group_id not in group_dict:
