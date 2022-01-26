@@ -361,7 +361,8 @@ class DataBaseSampler(object):
         sampled_gt_bboxes_2d = []
         avoid_coll_boxes_2d = gt_bboxes_2d
         sampled_gt_bboxes_cam = []
-        avoid_coll_boxes_cam = gt_bboxes_3d_cam.tensor.numpy()
+        avoid_coll_boxes_cam = gt_bboxes_3d_cam.tensor.numpy(
+        ) if gt_bboxes_3d_cam is not None else None
         sampled_centers2d = []
         avoid_coll_centers2d = gt_bboxes_centers2d
         sampled_depths = []

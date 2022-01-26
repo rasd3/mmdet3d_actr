@@ -309,8 +309,8 @@ eval_pipeline = [
     dict(type='Collect3D', keys=['points', 'img'])
 ]
 
-data = dict(samples_per_gpu=1,
-            workers_per_gpu=0,
+data = dict(samples_per_gpu=2,
+            workers_per_gpu=4,
             train=dict(
                 type='RepeatDataset',
                 times=2,

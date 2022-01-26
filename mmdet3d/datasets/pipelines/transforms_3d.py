@@ -371,7 +371,6 @@ class ObjectSample(object):
                     ]))
                 input_dict['gt_bboxes_3d_cam'] = gt_bboxes_3d_cam
             if 'depths' in input_dict:
-                breakpoint()
                 sampled_centers2d = sampled_dict['centers2d']
                 sampled_depths = sampled_dict['depths']
                 gt_bboxes_centers2d = np.concatenate(
@@ -796,7 +795,15 @@ class ObjectRangeFilter(object):
         gt_bboxes_3d.limit_yaw(offset=0.5, period=2 * np.pi)
         input_dict['gt_bboxes_3d'] = gt_bboxes_3d
         input_dict['gt_labels_3d'] = gt_labels_3d
-
+        if 'gt_labels' in input_dict:
+            input_dict['gt_labels'] = gt_labels_3d
+        if 'gt_bboxes_3d_cam' in input_dict:
+            gt_bboxes_3d_cam = input_dict['gt_bboxes_3d_cam'][mask]
+            gt_bboxes_3d_cam.limit_yaw(offset=0.5, period=2 * np.pi)
+            input_dict['gt_bboxes_3d_cam'] = gt_bboxes_3d_cam
+            input_dict['gt_bboxes'] = input_dict['gt_bboxes'][mask]
+            input_dict['centers2d'] = input_dict['centers2d'][mask]
+            input_dict['depths'] = input_dict['depths'][mask]
         return input_dict
 
     def __repr__(self):

@@ -187,12 +187,14 @@ class KittiParallelDataset(KittiDataset):
                 gt_labels.append(-1)
         gt_labels = np.array(gt_labels).astype(np.int64)
         gt_labels_3d = copy.deepcopy(gt_labels)
+        # valid mask
+        gt_mask = gt_labels_3d != -1
 
-        anns_results = dict(gt_bboxes_3d=gt_bboxes_3d,
-                            gt_labels_3d=gt_labels_3d,
-                            bboxes=gt_bboxes,
-                            labels=gt_labels,
-                            gt_names=gt_names)
+        anns_results = dict(gt_bboxes_3d=gt_bboxes_3d[gt_mask],
+                            gt_labels_3d=gt_labels_3d[gt_mask],
+                            bboxes=gt_bboxes[gt_mask],
+                            labels=gt_labels[gt_mask],
+                            gt_names=gt_names[gt_mask])
 
         # get mono3d annotation info
         img_id = self.mono3d_data_infos[index]['id']
@@ -211,8 +213,8 @@ class KittiParallelDataset(KittiDataset):
         if 'gtimg_path' in annos:
             # for MMGT-AUG
             anns_results.update({
-                'gtimg_path': annos['gtimg_path'],
-                'gtimg_disc': annos['gtimg_disc']
+                'gtimg_path': annos['gtimg_path'][gt_mask],
+                'gtimg_disc': annos['gtimg_disc'][gt_mask]
             })
 
         return anns_results
