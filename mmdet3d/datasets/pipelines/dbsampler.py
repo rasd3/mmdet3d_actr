@@ -303,8 +303,7 @@ class DataBaseSampler(object):
             mask = mask[:mask.shape[0] + cut_x, :mask.shape[1] + cut_y]
             if mask.sum() == 0:
                 continue
-            img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
-                cut_x,
+            img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] + cut_x,
                 gts_coor[i][1]:gts_coor[i][1] + gts_img[i].shape[1] +
                 cut_y][mask] = gts_img[i][:gts_img[i].shape[0] +
                                           cut_x, :gts_img[i].shape[1] +
@@ -318,6 +317,8 @@ class DataBaseSampler(object):
         gt_labels,
         gt_bboxes_2d=None,
         gt_bboxes_3d_cam=None,
+        gt_bboxes_depths=None,
+        gt_bboxes_centers2d=None,
         sample_idx=None,
         img=None,
         img_dict=None,
@@ -353,14 +354,18 @@ class DataBaseSampler(object):
             sample_num_per_class.append(sampled_num)
 
         sampled = []
+
         sampled_gt_bboxes = []
         avoid_coll_boxes = gt_bboxes
 
-        sampled_gt_bboxes_cam = []
-        avoid_coll_boxes_cam = gt_bboxes_3d_cam.tensor.numpy()
-
         sampled_gt_bboxes_2d = []
         avoid_coll_boxes_2d = gt_bboxes_2d
+        sampled_gt_bboxes_cam = []
+        avoid_coll_boxes_cam = gt_bboxes_3d_cam.tensor.numpy()
+        sampled_centers2d = []
+        avoid_coll_centers2d = gt_bboxes_centers2d
+        sampled_depths = []
+        avoid_coll_depths = gt_bboxes_depths
 
         for class_name, sampled_num in zip(self.sample_classes,
                                            sample_num_per_class):
@@ -381,14 +386,37 @@ class DataBaseSampler(object):
 
                     if gt_bboxes_3d_cam is not None:
                         if len(sampled_cls) == 1:
-                            sampled_gt_box_cam = sampled_cls[0]['box3d_cam'].tensor.numpy()[
-                                np.newaxis, ...]
+                            sampled_gt_box_cam = sampled_cls[0][
+                                'box3d_cam'].tensor.numpy()[np.newaxis, ...]
                         else:
-                            sampled_gt_box_cam = np.stack(
-                                [s['box3d_cam'].tensor.numpy() for s in sampled_cls], axis=0)
+                            sampled_gt_box_cam = np.stack([
+                                s['box3d_cam'].tensor.numpy()
+                                for s in sampled_cls
+                            ],
+                                                          axis=0)
                         sampled_gt_bboxes_cam += [sampled_gt_box_cam]
                         avoid_coll_boxes_cam = np.concatenate(
-                            [avoid_coll_boxes_cam, sampled_gt_box_cam[:, 0]], axis=0)
+                            [avoid_coll_boxes_cam, sampled_gt_box_cam[:, 0]],
+                            axis=0)
+
+                    if gt_bboxes_depths is not None:
+                        if len(sampled_cls) == 1:
+                            sampled_center2d = sampled_cls[0]['centers2d'][
+                                np.newaxis, ...]
+                            sampled_depth = sampled_cls[0]['depths'][
+                                np.newaxis, ...]
+                        else:
+                            sampled_center2d = np.stack(
+                                [s['centers2d'] for s in sampled_cls], axis=0)
+                            sampled_depth = np.stack(
+                                [s['depths'] for s in sampled_cls], axis=0)
+
+                        sampled_depths += [sampled_depth]
+                        avoid_coll_depths = np.concatenate(
+                            [avoid_coll_depths, sampled_depth], axis=0)
+                        sampled_centers2d += [sampled_center2d]
+                        avoid_coll_centers2d = np.concatenate(
+                            [avoid_coll_centers2d, sampled_center2d], axis=0)
 
                     sampled_gt_bboxes += [sampled_gt_box]
                     avoid_coll_boxes = np.concatenate(
@@ -443,7 +471,16 @@ class DataBaseSampler(object):
                 ret.update({'img': img, 'gt_bboxes_2d': sampled_gt_bboxes_2d})
             if gt_bboxes_3d_cam is not None:
                 sampled_gt_bboxes_cam = np.concatenate(sampled_gt_bboxes_cam)
-                ret.update({'gt_bboxes_3d_cam': sampled_gt_bboxes_cam})
+                ret.update({
+                    'gt_bboxes_3d_cam': sampled_gt_bboxes_cam,
+                })
+            if gt_bboxes_depths is not None:
+                sampled_centers2d = np.concatenate(sampled_centers2d)
+                sampled_depths = np.concatenate(sampled_depths)
+                ret.update({
+                    'centers2d': sampled_centers2d,
+                    'depths': sampled_depths
+                })
 
         return ret
 

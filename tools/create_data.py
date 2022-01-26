@@ -32,6 +32,7 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         with_mask=(version == 'mask'),
         for_parallel=True
     )
+    breakpoint()
     kitti.create_kitti_info_file(root_path, info_prefix)
     kitti.create_reduced_point_cloud(root_path, info_prefix)
 

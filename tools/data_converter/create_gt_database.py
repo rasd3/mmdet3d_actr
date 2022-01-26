@@ -255,6 +255,8 @@ def create_groundtruth_database(dataset_class_name,
             p_cnt = 0
             kitti_categories = ('Pedestrian', 'Cyclist', 'Car')
             gt_boxes_3d_cam = annos['mono3d_gt_bboxes_3d']
+            gt_boxes_centers2d = annos['mono3d_centers2d']
+            gt_boxes_depths = annos['mono3d_depths']
         names = annos['gt_names']
         group_dict = dict()
         if 'group_ids' in annos:
@@ -332,17 +334,15 @@ def create_groundtruth_database(dataset_class_name,
                 }
                 if for_parallel:
                     if names[i] in kitti_categories:
-                        if (gt_boxes_3d_cam[p_cnt].convert_to(0).tensor[0, -3:].
-                                numpy() == gt_boxes_3d[i][-3:]).sum() != 3:
+                        if (gt_boxes_3d_cam[p_cnt].convert_to(0).tensor[0, -3:]
+                                .numpy() == gt_boxes_3d[i][-3:]).sum() != 3:
                             print('1')
                             continue
-                        try:
-                            db_info.update(
-                                {'box3d_cam': gt_boxes_3d_cam[p_cnt]})
-                            p_cnt += 1
-                        except:
-                            breakpoint()
-                            abd = 1
+                        db_info.update({'box3d_cam': gt_boxes_3d_cam[p_cnt],
+                                        'centers2d': gt_boxes_centers2d[p_cnt],
+                                        'depths': gt_boxes_depths[p_cnt]
+                                        })
+                        p_cnt += 1
                 local_group_id = group_ids[i]
                 # if local_group_id >= 0:
                 if local_group_id not in group_dict:

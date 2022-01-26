@@ -230,7 +230,6 @@ class PGDHead(FCOSMono3DHead):
                 predictions, depth class predictions, location-aware weights,
                 attribute and centerness predictions of input feature maps.
         """
-        breakpoint()
         cls_score, bbox_pred, dir_cls_pred, attr_pred, centerness, cls_feat, \
             reg_feat = super().forward_single(x, scale, stride)
 
