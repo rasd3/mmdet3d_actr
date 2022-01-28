@@ -246,6 +246,7 @@ class KittiParallelDataset(KittiDataset):
         else:
             tmp_dir = None
 
+        breakpoint()
         if not isinstance(outputs[0], dict):
             result_files = self.bbox2result_kitti2d(outputs, self.CLASSES,
                                                     pklfile_prefix,

@@ -211,5 +211,9 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             bbox_img = self.simple_test_img(
                 img_feats, img_metas, rescale=rescale)
             for result_dict, img_bbox in zip(bbox_list, bbox_img):
-                result_dict['img_bbox'] = img_bbox
+                if len(img_bbox) > 1:
+                    for key in img_bbox.keys():
+                        result_dict[key] = img_bbox[key]
+                else:
+                    result_dict['img_bbox'] = img_bbox
         return bbox_list
