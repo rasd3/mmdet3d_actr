@@ -391,6 +391,9 @@ class LoadPointsFromFile(object):
         try:
             pts_bytes = self.file_client.get(pts_filename)
             points = np.frombuffer(pts_bytes, dtype=np.float32)
+        except OSError:
+            print('Got OSErorr')
+            print(pts_filename)
         except ConnectionError:
             mmcv.check_file_exist(pts_filename)
             if pts_filename.endswith('.npy'):

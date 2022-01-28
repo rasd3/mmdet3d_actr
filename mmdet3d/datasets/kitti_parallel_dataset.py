@@ -1,4 +1,6 @@
 import copy
+import tempfile
+from os import path as osp
 
 import numpy as np
 
@@ -67,16 +69,14 @@ class KittiParallelDataset(KittiDataset):
         centers2d = []
         depths = []
         for i, ann in enumerate(ann_info):
-            #  if ann['bbox'] == [1243.168574843754, 207.08279418681707, 331.9212524846919, 330.24391027107924]:
-                #  breakpoint()
-                #  abcd = 1
             if ann.get('ignore', False):
                 continue
             x1, y1, w, h = ann['bbox']
             inter_w = max(0, min(x1 + w, img_info['width']) - max(x1, 0))
             inter_h = max(0, min(y1 + h, img_info['height']) - max(y1, 0))
             if inter_w * inter_h == 0:
-                continue
+                pass
+                #  continue
             if ann['area'] <= 0 or w < 1 or h < 1:
                 continue
             if ann['category_id'] not in self.cat_ids:
@@ -218,3 +218,59 @@ class KittiParallelDataset(KittiDataset):
             })
 
         return anns_results
+
+    def format_results(self,
+                       outputs,
+                       pklfile_prefix=None,
+                       submission_prefix=None):
+        """Format the results to pkl file.
+
+        Args:
+            outputs (list[dict]): Testing results of the dataset.
+            pklfile_prefix (str | None): The prefix of pkl files. It includes
+                the file path and the prefix of filename, e.g., "a/b/prefix".
+                If not specified, a temp file will be created. Default: None.
+            submission_prefix (str | None): The prefix of submitted files. It
+                includes the file path and the prefix of filename, e.g.,
+                "a/b/prefix". If not specified, a temp file will be created.
+                Default: None.
+
+        Returns:
+            tuple: (result_files, tmp_dir), result_files is a dict containing \
+                the json filepaths, tmp_dir is the temporal directory created \
+                for saving json files when jsonfile_prefix is not specified.
+        """
+        if pklfile_prefix is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            pklfile_prefix = osp.join(tmp_dir.name, 'results')
+        else:
+            tmp_dir = None
+
+        if not isinstance(outputs[0], dict):
+            result_files = self.bbox2result_kitti2d(outputs, self.CLASSES,
+                                                    pklfile_prefix,
+                                                    submission_prefix)
+        elif 'pts_bbox' in outputs[0] or 'img_bbox' in outputs[0] or \
+                'img_bbox2d' in outputs[0]:
+            result_files = dict()
+            for name in outputs[0]:
+                results_ = [out[name] for out in outputs]
+                pklfile_prefix_ = pklfile_prefix + name
+                if submission_prefix is not None:
+                    submission_prefix_ = submission_prefix + name
+                else:
+                    submission_prefix_ = None
+                if '2d' in name:
+                    result_files = self.bbox2result_kitti2d(
+                        results_, self.CLASSES, pklfile_prefix_,
+                        submission_prefix_)
+                else:
+                    result_files_ = self.bbox2result_kitti(
+                        results_, self.CLASSES, pklfile_prefix_,
+                        submission_prefix_)
+                result_files[name] = result_files_
+        else:
+            result_files = self.bbox2result_kitti(outputs, self.CLASSES,
+                                                  pklfile_prefix,
+                                                  submission_prefix)
+        return result_files, tmp_dir

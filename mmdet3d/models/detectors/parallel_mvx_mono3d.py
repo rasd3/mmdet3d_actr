@@ -4,6 +4,7 @@ import cv2
 import mmcv
 from torch.nn import functional as F
 
+from mmdet3d.core import bbox3d2result
 from mmdet.models import DETECTORS
 from mmdet.models.builder import build_head
 from mmdet3d.models.builder import build_fusion_layer
@@ -20,7 +21,8 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         super(ParallelMVXMono3D, self).__init__(**kwargs)
 
         train_cfg, test_cfg = kwargs['train_cfg'], kwargs['test_cfg']
-        img_bbox_head.update(train_cfg=train_cfg.img)
+        if train_cfg is not None:
+            img_bbox_head.update(train_cfg=train_cfg.img)
         img_bbox_head.update(test_cfg=test_cfg.img)
         self.img_bbox_head = build_head(img_bbox_head)
 
@@ -50,7 +52,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         coors_batch = torch.cat(coors_batch, dim=0)
         return points, coors_batch
 
-    def extract_pts_feat(self, points, img_feats, img_metas):
+    def extract_pts_feat(self, points, img_feats, img_metas, train):
         """Extract point features."""
         if not self.with_pts_bbox:
             return None
@@ -66,15 +68,19 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             x = self.pts_neck(x)
         return x, pts_aux_feats
 
-    def extract_feat(self, points, img, img_metas):
+    def extract_feat(self, points, img, img_metas, train):
         """Extract features from images and points."""
         img_feats = self.extract_img_feat(img, img_metas)
         pts_feats, pts_aux_feats = self.extract_pts_feat(
-            points, img_feats, img_metas)
-        if False:
-            # TODO: implement IACTR
-            img_feats = self.li_fusion_layer(img_feats)
-        return (img_feats, pts_feats, pts_aux_feats)
+            points, img_feats, img_metas, train)
+
+        if train:
+            if False:
+                # TODO: implement IACTR
+                img_feats = self.li_fusion_layer(img_feats)
+            return (img_feats, pts_feats, pts_aux_feats)
+        else:
+            return img_feats, pts_feats
 
     def forward_pts_train(self,
                           pts_feats,
@@ -132,7 +138,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         #  self.input_visualize(img, gt_bboxes_cam)
 
         img_feats, pts_feats, pts_aux_feats = self.extract_feat(
-            points, img=img, img_metas=img_metas)
+            points, img=img, img_metas=img_metas, train=True)
         losses = dict()
         losses_pts = self.forward_pts_train(pts_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
@@ -150,3 +156,60 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         #  losses.update(losses_aux)
 
         return losses
+
+    def simple_test_img(self, img_feats, img_metas, rescale=False):
+        """Test function without test time augmentation.
+
+        Args:
+            imgs (list[torch.Tensor]): List of multiple images
+            img_metas (list[dict]): List of image information.
+            rescale (bool, optional): Whether to rescale the results.
+                Defaults to False.
+
+        Returns:
+            list[list[np.ndarray]]: BBox results of each image and classes.
+                The outer list corresponds to each image. The inner list
+                corresponds to each class.
+        """
+        outs = self.img_bbox_head(img_feats)
+        bbox_outputs = self.img_bbox_head.get_bboxes(
+            *outs, img_metas, rescale=rescale)
+
+        if self.img_bbox_head.pred_bbox2d:
+            from mmdet.core import bbox2result
+            bbox2d_img = [
+                bbox2result(bboxes2d, labels, self.img_bbox_head.num_classes)
+                for bboxes, scores, labels, attrs, bboxes2d in bbox_outputs
+            ]
+            bbox_outputs = [bbox_outputs[0][:-1]]
+
+        bbox_img = [
+            bbox3d2result(bboxes, scores, labels, attrs)
+            for bboxes, scores, labels, attrs in bbox_outputs
+        ]
+
+        bbox_list = [dict() for i in range(len(img_metas))]
+        for result_dict, img_bbox in zip(bbox_list, bbox_img):
+            result_dict['img_bbox'] = img_bbox
+        if self.img_bbox_head.pred_bbox2d:
+            for result_dict, img_bbox2d in zip(bbox_list, bbox2d_img):
+                result_dict['img_bbox2d'] = img_bbox2d
+        return bbox_list
+
+    def simple_test(self, points, img_metas, img=None, rescale=False):
+        """Test function without augmentaiton."""
+        img_feats, pts_feats = self.extract_feat(
+            points, img=img, img_metas=img_metas, train=False)
+
+        bbox_list = [dict() for i in range(len(img_metas))]
+        if pts_feats and self.with_pts_bbox:
+            bbox_pts = self.simple_test_pts(
+                pts_feats, img_metas, rescale=rescale)
+            for result_dict, pts_bbox in zip(bbox_list, bbox_pts):
+                result_dict['pts_bbox'] = pts_bbox
+        if img_feats and self.with_img_bbox:
+            bbox_img = self.simple_test_img(
+                img_feats, img_metas, rescale=rescale)
+            for result_dict, img_bbox in zip(bbox_list, bbox_img):
+                result_dict['img_bbox'] = img_bbox
+        return bbox_list

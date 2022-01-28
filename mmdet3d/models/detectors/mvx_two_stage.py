@@ -296,7 +296,6 @@ class MVXTwoStageDetector(Base3DDetector):
         Returns:
             dict: Losses of different branches.
         """
-        breakpoint()
         img_feats, pts_feats = self.extract_feat(
             points, img=img, img_metas=img_metas)
         #  self.feat_visualize(img_feats[0], img_metas)
@@ -315,16 +314,6 @@ class MVXTwoStageDetector(Base3DDetector):
                 gt_bboxes_ignore=gt_bboxes_ignore,
                 proposals=proposals)
             losses.update(losses_img)
-        #  print('img_feat max: %f' % img_feats[0].max())
-        #  print('pts_feat max: %f' % pts_feats[0].max())
-
-        for key in losses:
-            if type(losses[key]) == list:
-                loss_val = losses[key][0]
-            else:
-                loss_val = losses[key]
-            if loss_val.isnan() is True or loss_val > 10000.:
-                breakpoint()
 
         return losses
 
