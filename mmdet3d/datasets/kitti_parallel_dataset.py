@@ -1,4 +1,6 @@
 import copy
+import torch
+import mmcv
 import tempfile
 from os import path as osp
 
@@ -6,7 +8,7 @@ import numpy as np
 
 from mmdet.datasets import DATASETS
 from mmdet.datasets.api_wrappers import COCO
-from ..core.bbox import CameraInstance3DBoxes
+from ..core.bbox import Box3DMode, CameraInstance3DBoxes, points_cam2img
 from .kitti_dataset import KittiDataset
 
 
@@ -127,15 +129,16 @@ class KittiParallelDataset(KittiDataset):
 
         seg_map = img_info['filename'].replace('jpg', 'png')
 
-        ann = dict(bboxes=gt_bboxes,
-                   labels=gt_labels,
-                   gt_bboxes_3d=gt_bboxes_cam3d,
-                   gt_labels_3d=gt_labels_3d,
-                   centers2d=centers2d,
-                   depths=depths,
-                   bboxes_ignore=gt_bboxes_ignore,
-                   masks=gt_masks_ann,
-                   seg_map=seg_map)
+        ann = dict(
+            bboxes=gt_bboxes,
+            labels=gt_labels,
+            gt_bboxes_3d=gt_bboxes_cam3d,
+            gt_labels_3d=gt_labels_3d,
+            centers2d=centers2d,
+            depths=depths,
+            bboxes_ignore=gt_bboxes_ignore,
+            masks=gt_masks_ann,
+            seg_map=seg_map)
 
         return ann
 
@@ -190,11 +193,12 @@ class KittiParallelDataset(KittiDataset):
         # valid mask
         gt_mask = gt_labels_3d != -1
 
-        anns_results = dict(gt_bboxes_3d=gt_bboxes_3d[gt_mask],
-                            gt_labels_3d=gt_labels_3d[gt_mask],
-                            bboxes=gt_bboxes[gt_mask],
-                            labels=gt_labels[gt_mask],
-                            gt_names=gt_names[gt_mask])
+        anns_results = dict(
+            gt_bboxes_3d=gt_bboxes_3d[gt_mask],
+            gt_labels_3d=gt_labels_3d[gt_mask],
+            bboxes=gt_bboxes[gt_mask],
+            labels=gt_labels[gt_mask],
+            gt_names=gt_names[gt_mask])
 
         # get mono3d annotation info
         img_id = self.mono3d_data_infos[index]['id']
@@ -246,7 +250,6 @@ class KittiParallelDataset(KittiDataset):
         else:
             tmp_dir = None
 
-        breakpoint()
         if not isinstance(outputs[0], dict):
             result_files = self.bbox2result_kitti2d(outputs, self.CLASSES,
                                                     pklfile_prefix,
@@ -262,16 +265,210 @@ class KittiParallelDataset(KittiDataset):
                 else:
                     submission_prefix_ = None
                 if '2d' in name:
-                    result_files = self.bbox2result_kitti2d(
+                    result_files_ = self.bbox2result_kitti2d(
                         results_, self.CLASSES, pklfile_prefix_,
                         submission_prefix_)
-                else:
+                elif name == 'pts_bbox':
                     result_files_ = self.bbox2result_kitti(
                         results_, self.CLASSES, pklfile_prefix_,
                         submission_prefix_)
+                elif name == 'img_bbox':
+                    result_files_ = self.bbox2result_kitti_3dcam(
+                        results_, self.CLASSES, pklfile_prefix_,
+                        submission_prefix_)
+
                 result_files[name] = result_files_
         else:
             result_files = self.bbox2result_kitti(outputs, self.CLASSES,
                                                   pklfile_prefix,
                                                   submission_prefix)
         return result_files, tmp_dir
+
+    def bbox2result_kitti_3dcam(self,
+                                net_outputs,
+                                class_names,
+                                pklfile_prefix=None,
+                                submission_prefix=None):
+        """Convert 3D detection results to kitti format for evaluation and test
+        submission.
+
+        Args:
+            net_outputs (list[np.ndarray]): List of array storing the \
+                inferenced bounding boxes and scores.
+            class_names (list[String]): A list of class names.
+            pklfile_prefix (str | None): The prefix of pkl file.
+            submission_prefix (str | None): The prefix of submission file.
+
+        Returns:
+            list[dict]: A list of dictionaries with the kitti format.
+        """
+        assert len(net_outputs) == len(self.data_infos)
+        if submission_prefix is not None:
+            mmcv.mkdir_or_exist(submission_prefix)
+
+        det_annos = []
+        print('\nConverting prediction to KITTI format')
+        for idx, pred_dicts in enumerate(
+                mmcv.track_iter_progress(net_outputs)):
+            annos = []
+            info = self.data_infos[idx]
+            sample_idx = info['image']['image_idx']
+            image_shape = info['image']['image_shape'][:2]
+
+            box_dict = self.convert_valid_bboxes_3dcam(pred_dicts, info)
+            anno = {
+                'name': [],
+                'truncated': [],
+                'occluded': [],
+                'alpha': [],
+                'bbox': [],
+                'dimensions': [],
+                'location': [],
+                'rotation_y': [],
+                'score': []
+            }
+            if len(box_dict['bbox']) > 0:
+                box_2d_preds = box_dict['bbox']
+                box_preds = box_dict['box3d_camera']
+                scores = box_dict['scores']
+                box_preds_lidar = box_dict['box3d_lidar']
+                label_preds = box_dict['label_preds']
+
+                for box, box_lidar, bbox, score, label in zip(
+                        box_preds, box_preds_lidar, box_2d_preds, scores,
+                        label_preds):
+                    bbox[2:] = np.minimum(bbox[2:], image_shape[::-1])
+                    bbox[:2] = np.maximum(bbox[:2], [0, 0])
+                    anno['name'].append(class_names[int(label)])
+                    anno['truncated'].append(0.0)
+                    anno['occluded'].append(0)
+                    anno['alpha'].append(-np.arctan2(box[0], box[2]) + box[6])
+                    anno['bbox'].append(bbox)
+                    anno['dimensions'].append(box[3:6])
+                    anno['location'].append(box[:3])
+                    anno['rotation_y'].append(box[6])
+                    anno['score'].append(score)
+
+                anno = {k: np.stack(v) for k, v in anno.items()}
+                annos.append(anno)
+
+            else:
+                anno = {
+                    'name': np.array([]),
+                    'truncated': np.array([]),
+                    'occluded': np.array([]),
+                    'alpha': np.array([]),
+                    'bbox': np.zeros([0, 4]),
+                    'dimensions': np.zeros([0, 3]),
+                    'location': np.zeros([0, 3]),
+                    'rotation_y': np.array([]),
+                    'score': np.array([]),
+                }
+                annos.append(anno)
+
+            if submission_prefix is not None:
+                curr_file = f'{submission_prefix}/{sample_idx:06d}.txt'
+                with open(curr_file, 'w') as f:
+                    bbox = anno['bbox']
+                    loc = anno['location']
+                    dims = anno['dimensions']  # lhw -> hwl
+
+                    for idx in range(len(bbox)):
+                        print(
+                            '{} -1 -1 {:.4f} {:.4f} {:.4f} {:.4f} '
+                            '{:.4f} {:.4f} {:.4f} '
+                            '{:.4f} {:.4f} {:.4f} {:.4f} {:.4f} {:.4f}'.format(
+                                anno['name'][idx], anno['alpha'][idx],
+                                bbox[idx][0], bbox[idx][1], bbox[idx][2],
+                                bbox[idx][3], dims[idx][1], dims[idx][2],
+                                dims[idx][0], loc[idx][0], loc[idx][1],
+                                loc[idx][2], anno['rotation_y'][idx],
+                                anno['score'][idx]),
+                            file=f)
+
+            annos[-1]['sample_idx'] = np.array(
+                [sample_idx] * len(annos[-1]['score']), dtype=np.int64)
+
+            det_annos += annos
+
+        if pklfile_prefix is not None:
+            if not pklfile_prefix.endswith(('.pkl', '.pickle')):
+                out = f'{pklfile_prefix}.pkl'
+            mmcv.dump(det_annos, out)
+            print('Result is saved to %s' % out)
+
+        return det_annos
+
+    def convert_valid_bboxes_3dcam(self, box_dict, info):
+        """Convert the predicted boxes into valid ones.
+
+        Args:
+            box_dict (dict): Box dictionaries to be converted.
+                - boxes_3d (:obj:`CameraInstance3DBoxes`): 3D bounding boxes.
+                - scores_3d (torch.Tensor): Scores of boxes.
+                - labels_3d (torch.Tensor): Class labels of boxes.
+            info (dict): Data info.
+
+        Returns:
+            dict: Valid predicted boxes.
+                - bbox (np.ndarray): 2D bounding boxes.
+                - box3d_camera (np.ndarray): 3D bounding boxes in \
+                    camera coordinate.
+                - scores (np.ndarray): Scores of boxes.
+                - label_preds (np.ndarray): Class label predictions.
+                - sample_idx (int): Sample index.
+        """
+        box_preds = box_dict['boxes_3d']
+        scores = box_dict['scores_3d']
+        labels = box_dict['labels_3d']
+        sample_idx = info['image']['image_idx']
+
+        if len(box_preds) == 0:
+            return dict(
+                bbox=np.zeros([0, 4]),
+                box3d_camera=np.zeros([0, 7]),
+                scores=np.zeros([0]),
+                label_preds=np.zeros([0, 4]),
+                sample_idx=sample_idx)
+
+        rect = info['calib']['R0_rect'].astype(np.float32)
+        Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
+        P2 = info['calib']['P2'].astype(np.float32)
+        img_shape = info['image']['image_shape']
+        P2 = box_preds.tensor.new_tensor(P2)
+
+        box_preds_camera = box_preds
+        box_preds_lidar = box_preds.convert_to(Box3DMode.LIDAR,
+                                               np.linalg.inv(rect @ Trv2c))
+
+        box_corners = box_preds_camera.corners
+        box_corners_in_image = points_cam2img(box_corners, P2)
+        # box_corners_in_image: [N, 8, 2]
+        minxy = torch.min(box_corners_in_image, dim=1)[0]
+        maxxy = torch.max(box_corners_in_image, dim=1)[0]
+        box_2d_preds = torch.cat([minxy, maxxy], dim=1)
+        # Post-processing
+        # check box_preds_camera
+        image_shape = box_preds.tensor.new_tensor(img_shape)
+        valid_cam_inds = ((box_2d_preds[:, 0] < image_shape[1]) &
+                          (box_2d_preds[:, 1] < image_shape[0]) &
+                          (box_2d_preds[:, 2] > 0) & (box_2d_preds[:, 3] > 0))
+        # check box_preds
+        valid_inds = valid_cam_inds
+
+        if valid_inds.sum() > 0:
+            return dict(
+                bbox=box_2d_preds[valid_inds, :].numpy(),
+                box3d_camera=box_preds_camera[valid_inds].tensor.numpy(),
+                box3d_lidar=box_preds_lidar[valid_inds].tensor.numpy(),
+                scores=scores[valid_inds].numpy(),
+                label_preds=labels[valid_inds].numpy(),
+                sample_idx=sample_idx)
+        else:
+            return dict(
+                bbox=np.zeros([0, 4]),
+                box3d_camera=np.zeros([0, 7]),
+                box3d_lidar=np.zeros([0, 7]),
+                scores=np.zeros([0]),
+                label_preds=np.zeros([0, 4]),
+                sample_idx=sample_idx)

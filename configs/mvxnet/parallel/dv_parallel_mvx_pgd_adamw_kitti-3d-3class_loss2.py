@@ -8,6 +8,8 @@ point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 
 model = dict(
     type='ParallelMVXMono3D',
+    loss_pts_w = 1.,
+    loss_img_w = 0.125,
     img_backbone=dict(type='ResNet',
                       depth=101,
                       num_stages=4,

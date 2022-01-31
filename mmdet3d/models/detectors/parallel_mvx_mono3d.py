@@ -17,7 +17,12 @@ IDX = 0
 @DETECTORS.register_module()
 class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
-    def __init__(self, img_bbox_head, li_fusion_layer, **kwargs):
+    def __init__(self,
+                 img_bbox_head,
+                 li_fusion_layer,
+                 loss_pts_w=1.,
+                 loss_img_w=1.,
+                 **kwargs):
         super(ParallelMVXMono3D, self).__init__(**kwargs)
 
         train_cfg, test_cfg = kwargs['train_cfg'], kwargs['test_cfg']
@@ -27,6 +32,9 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         self.img_bbox_head = build_head(img_bbox_head)
 
         self.li_fusion_layer = build_fusion_layer(li_fusion_layer)
+
+        self.loss_pts_w = torch.tensor(loss_pts_w).cuda()
+        self.loss_img_w = torch.tensor(loss_img_w).cuda()
 
     @torch.no_grad()
     @force_fp32()
@@ -139,20 +147,26 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
         img_feats, pts_feats, pts_aux_feats = self.extract_feat(
             points, img=img, img_metas=img_metas, train=True)
-        losses = dict()
+
         losses_pts = self.forward_pts_train(pts_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore)
-        losses.update(losses_pts)
-
         losses_img = self.img_bbox_head.forward_train(
             img_feats, img_metas, gt_bboxes, gt_labels, gt_bboxes_3d_cam,
             gt_labels_3d, centers2d, depths, attr_labels, gt_bboxes_ignore)
-
-        losses.update(losses_img)
-
         losses_aux = self.forward_aux_train(pts_aux_feats, img_feats,
                                             gt_foreground_pts, gt_center_pts)
+
+        losses = dict()
+        for key in losses_pts:
+            if type(losses_pts[key]) == list:
+                losses_pts[key][0] *= self.loss_pts_w
+            else:
+                losses_pts[key] *= self.loss_pts_w
+            losses.update({'pts_' + key: losses_pts[key]})
+        for key in losses_img:
+            losses.update({'img_' + key: losses_img[key] * self.loss_img_w})
+
         #  losses.update(losses_aux)
 
         return losses

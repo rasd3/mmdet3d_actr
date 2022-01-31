@@ -343,7 +343,7 @@ class KittiDataset(Custom3DDataset):
             ap_dict = dict()
             for name, result_files_ in result_files.items():
                 eval_types = ['bbox', 'bev', '3d']
-                if 'img' in name:
+                if '2d' in name:
                     eval_types = ['bbox']
                 ap_result_str, ap_dict_ = kitti_eval(gt_annos,
                                                      result_files_,
@@ -566,8 +566,8 @@ class KittiDataset(Custom3DDataset):
 
         if pklfile_prefix is not None:
             # save file in pkl format
-            pklfile_path = (pklfile_prefix[:-4] if pklfile_prefix.endswith(
-                ('.pkl', '.pickle')) else pklfile_prefix)
+            if not pklfile_prefix.endswith(('.pkl', '.pickle')):
+                pklfile_path = f'{pklfile_prefix}.pkl'
             mmcv.dump(det_annos, pklfile_path)
 
         if submission_prefix is not None:
