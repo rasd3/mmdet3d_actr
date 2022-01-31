@@ -310,12 +310,13 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             # iou regression loss
             loss_iou = None
             if self.use_iou_regressor:
-                loss_iou = F.binary_cross_entropy(pos_iou_reg_preds.sigmoid(), pos_iou_targets.detach())
+                loss_iou = F.binary_cross_entropy(pos_iou_reg_preds.sigmoid(),
+                                                  pos_iou_targets.detach())
                 #  loss_iou = self.loss_iou(
-                    #  pos_iou_reg_preds,
-                    #  pos_iou_targets,
-                    #  pos_iou_weights,
-                    #  avg_factor=num_total_samples)
+                #  pos_iou_reg_preds,
+                #  pos_iou_targets,
+                #  pos_iou_weights,
+                #  avg_factor=num_total_samples)
         else:
             loss_bbox = pos_bbox_pred.sum()
             if self.use_direction_classifier:
@@ -689,6 +690,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             iou_threshold=score_thr,
             pre_max_size=cfg.nms_pre,
             post_max_size=cfg.max_num)
+
         bboxes, dir_scores, labels, scores = results
         if bboxes.shape[0] > 0:
             dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,

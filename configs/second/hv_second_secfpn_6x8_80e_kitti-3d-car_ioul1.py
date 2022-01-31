@@ -8,6 +8,7 @@ model = dict(
     bbox_head=dict(type='Anchor3DHead',
                    num_classes=1,
                    use_iou_regressor=True,
+                   use_iou_config_loss=True,
                    loss_iou=dict(type='SmoothL1Loss',
                                  beta=1.0 / 9.0,
                                  loss_weight=1.0),
@@ -32,4 +33,3 @@ model = dict(
                    debug=False))
 
 data = dict(samples_per_gpu=18, workers_per_gpu=4)
-find_unused_parameters = True

@@ -344,7 +344,6 @@ def rotate_weighted_nms_cc(
     anchors=None,
 ):
     scores = dets[:, 5]
-    order = scores.argsort()[::-1].astype(np.int32)  # highest->lowest
     dets_corners = box_np_ops.center_to_corner_box2d(dets[:, :2], dets[:, 2:4],
                                                      dets[:, 4])
     dets_standup = box_np_ops.corner_to_standup_nd_jit(dets_corners)
