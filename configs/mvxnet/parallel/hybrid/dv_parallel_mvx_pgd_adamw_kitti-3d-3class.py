@@ -82,7 +82,7 @@ model = dict(
         loss_depth=dict(
             type='UncertainSmoothL1Loss', alpha=1.0, beta=3.0,
             loss_weight=1.0)),
-    li_fusion_layer=dict(
+    pts_li_fusion_layer=dict(
         type='IACTR',
         actr_cfg=dict(
             fusion_method='sum',
@@ -379,7 +379,9 @@ optimizer = dict(
         lr=0.001,
         momentum=0.9,
         weight_decay=0.0001,
-        paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.)))
+        ),
+    paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.)
+)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
