@@ -692,6 +692,14 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             post_max_size=cfg.max_num)
 
         bboxes, dir_scores, labels, scores = results
+        # filtering nan
+        n_mask = torch.ones(scores.shape, dtype=torch.bool)
+        for i in range(bboxes.shape[0]):
+            if bboxes[i][0].isnan():
+                n_mask[i] = False
+        bboxes, dir_scores = bboxes[n_mask], dir_scores[n_mask]
+        labels, scores = labels[n_mask], scores[n_mask]
+
         if bboxes.shape[0] > 0:
             dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,
                                    self.dir_limit_offset, np.pi)
