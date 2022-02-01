@@ -121,7 +121,9 @@ class SparseEncoder(nn.Module):
                 batch_size,
                 img_feats=None,
                 img_metas=None,
-                points=None):
+                points=None,
+                ret_lidar_features=False,
+                ):
         """Forward of SparseEncoder.
 
         Args:
@@ -141,8 +143,12 @@ class SparseEncoder(nn.Module):
         x = self.conv_input(input_sp_tensor)
 
         encode_features = []
+        if ret_lidar_features:
+            lidar_features = []
         for idx, encoder_layer in enumerate(self.encoder_layers):
             x = encoder_layer(x)
+            if ret_lidar_features:
+                lidar_features.append(x)
             if self.fusion_pos is not None and idx in self.fusion_pos:
                 c_pts = self.coor2pts(x)
                 f_feats = self.fusion_layer(img_feats, c_pts, x.features,
@@ -159,7 +165,10 @@ class SparseEncoder(nn.Module):
         N, C, D, H, W = spatial_features.shape
         spatial_features = spatial_features.view(N, C * D, H, W)
 
-        return spatial_features
+        if ret_lidar_features:
+            return spatial_features, lidar_features
+        else:
+            return spatial_features
 
     def make_encoder_layers(self,
                             make_block,

@@ -68,24 +68,23 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x = self.pts_middle_encoder(voxel_features, feature_coors, batch_size,
-                                    img_feats, img_metas, points)
+        x, pts_lidar_feats = self.pts_middle_encoder(voxel_features, feature_coors, batch_size,
+                                    img_feats, img_metas, points, ret_lidar_features=True)
         pts_aux_feats = x.clone()
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)
-        return x, pts_aux_feats
+        return x, pts_aux_feats, pts_lidar_feats
 
     def extract_feat(self, points, img, img_metas, train):
         """Extract features from images and points."""
         img_feats = self.extract_img_feat(img, img_metas)
-        pts_feats, pts_aux_feats = self.extract_pts_feat(
+        pts_feats, pts_aux_feats, pts_lidar_feats = self.extract_pts_feat(
             points, img_feats, img_metas, train)
 
         if train:
-            if False:
-                # TODO: implement IACTR
-                img_feats = self.pts_li_fusion_layer(img_feats)
+            breakpoint()
+            img_feats = self.li_fusion_layer(img_feats, pts_lidar_feats, img_metas)
             return (img_feats, pts_feats, pts_aux_feats)
         else:
             return img_feats, pts_feats

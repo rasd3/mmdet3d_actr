@@ -85,6 +85,9 @@ model = dict(
                         beta=3.0,
                         loss_weight=1.0)),
     li_fusion_layer=dict(type='IACTR',
+                         voxel_size=voxel_size,
+                         sparse_shape=[41, 1600, 1408],
+                         point_cloud_range=point_cloud_range,
                          actr_cfg=dict(fusion_method='sum',
                                        num_bins=80,
                                        num_channels=[256, 256, 256, 256],
@@ -309,8 +312,8 @@ eval_pipeline = [
     dict(type='Collect3D', keys=['points', 'img'])
 ]
 
-data = dict(samples_per_gpu=3,
-            workers_per_gpu=4,
+data = dict(samples_per_gpu=2,
+            workers_per_gpu=0,
             train=dict(
                 type='RepeatDataset',
                 times=2,
