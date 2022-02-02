@@ -20,6 +20,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
     def __init__(self,
                  img_bbox_head,
                  pts_li_fusion_layer,
+                 use_li_fusion_layer,
                  loss_pts_w=1.,
                  loss_img_w=1.,
                  **kwargs):
@@ -31,7 +32,9 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         img_bbox_head.update(test_cfg=test_cfg.img)
         self.img_bbox_head = build_head(img_bbox_head)
 
-        self.pts_li_fusion_layer = build_fusion_layer(pts_li_fusion_layer)
+        self.use_li_fusion_layer = use_li_fusion_layer
+        if self.use_li_fusion_layer:
+            self.pts_li_fusion_layer = build_fusion_layer(pts_li_fusion_layer)
 
         self.loss_pts_w = torch.tensor(loss_pts_w).cuda()
         self.loss_img_w = torch.tensor(loss_img_w).cuda()
@@ -68,8 +71,14 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x, pts_lidar_feats = self.pts_middle_encoder(voxel_features, feature_coors, batch_size,
-                                    img_feats, img_metas, points, ret_lidar_features=True)
+        x, pts_lidar_feats = self.pts_middle_encoder(
+            voxel_features,
+            feature_coors,
+            batch_size,
+            img_feats,
+            img_metas,
+            points,
+            ret_lidar_features=True)
         pts_aux_feats = x.clone()
         x = self.pts_backbone(x)
         if self.with_pts_neck:
@@ -83,8 +92,10 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             points, img_feats, img_metas, train)
 
         if train:
-            breakpoint()
-            img_feats = self.li_fusion_layer(img_feats, pts_lidar_feats, img_metas)
+            if self.use_li_fusion_layer:
+                img_feats = self.pts_li_fusion_layer(img_feats,
+                                                     pts_lidar_feats,
+                                                     img_metas)
             return (img_feats, pts_feats, pts_aux_feats)
         else:
             return img_feats, pts_feats

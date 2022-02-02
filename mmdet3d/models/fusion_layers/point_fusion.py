@@ -464,7 +464,7 @@ class IACTR(BaseModule):
                  ):
         super(IACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
-        self.actr = build_actr(actr_cfg)
+        self.iactr = build_actr(actr_cfg, model_name='IACTR')
         self.coord_type = coord_type
         self.activate_out = activate_out
         self.voxel_size = voxel_size
@@ -496,7 +496,8 @@ class IACTR(BaseModule):
         i_pts_feat = torch.zeros(tuple(i_shape), device=coor.device)
         i_coor = (coor * shape).to(torch.long)
         i_pts_feat[i_coor[:, 0], i_coor[:, 1]] = pts_feat.features
-        #  self.visualize(i_pts_feat)
+        i_pts_feat = i_pts_feat[:-1, :-1].permute(2, 0, 1)
+        #  self.viualize(i_pts_feat)
         return i_pts_feat
 
     def forward(self, img_feats, pts_feats, img_metas):
@@ -514,21 +515,22 @@ class IACTR(BaseModule):
         batch_size = len(img_metas)
         scale_size = len(pts_feats)
         device = img_feats[0].device
-        img_feats = img_feats[:self.actr.num_backbone_outs]
+        img_feats = img_feats[:self.iactr.num_backbone_outs]
         img_shapes = [torch.tensor(f.shape[2:], device=device) for f in img_feats]
 
-        for b in range(batch_size):
-            img_meta = img_metas[b]
-            img_scale_factor = (
-                img_feats[b].new_tensor(img_meta['scale_factor'][:2])
-                if 'scale_factor' in img_meta.keys() else 1)
-            img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
-            img_crop_offset = (
-                img_feats[b].new_tensor(img_meta['img_crop_offset'])
-                if 'img_crop_offset' in img_meta.keys() else 0)
-            proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
-            for s in range(scale_size):
-                breakpoint()
+        pts_img_list = []
+        for s in range(scale_size):
+            batch_img_list = []
+            for b in range(batch_size):
+                img_meta = img_metas[b]
+                img_scale_factor = (
+                    img_feats[b].new_tensor(img_meta['scale_factor'][:2])
+                    if 'scale_factor' in img_meta.keys() else 1)
+                img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
+                img_crop_offset = (
+                    img_feats[b].new_tensor(img_meta['img_crop_offset'])
+                    if 'img_crop_offset' in img_meta.keys() else 0)
+                proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
                 pts = self.coor2pts(pts_feats[s])
                 coor_2d = get_2d_coor(
                     img_meta=img_meta,
@@ -540,16 +542,18 @@ class IACTR(BaseModule):
                     img_flip=img_flip,
                     img_pad_shape=img_meta['input_shape'][:2],
                     img_shape=img_meta['img_shape'][:2])
-                self.pts2img(coor_2d, pts_feats[s], img_shapes[s])
-        return img_feats
+                pt_img = self.pts2img(coor_2d, pts_feats[s], img_shapes[s])
+                batch_img_list.append(pt_img.unsqueeze(0))
+            pts_img_list.append(torch.cat(batch_img_list))
+
+        enh_feat = self.iactr(
+            i_feats=img_feats,
+            p_feats=pts_img_list,
+        )
+
+        return enh_feat
 
 """
-        enh_feat = self.actr(
-            v_feat=pts_feats_b,
-            grid=coor_2d_b,
-            i_feats=img_feats,
-            lidar_grid=pts_b,
-        )
 
         if self.fusion_method == 'replace':
             fuse_out = enh_feat_cat

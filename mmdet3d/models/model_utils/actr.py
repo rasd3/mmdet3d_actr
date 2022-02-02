@@ -42,6 +42,7 @@ class ACTR(nn.Module):
         num_channels,
         num_feature_levels,
         max_num_ne_voxel,
+        p_num_channels=None,
         pos_encode_method="image_coor",
     ):
         """Initializes the model.
@@ -165,6 +166,149 @@ class ACTR(nn.Module):
         return q_enh_feats
 
 
+class IACTR(nn.Module):
+    """This is the Deformable IACTR module that performs cross projection"""
+
+    def __init__(
+        self,
+        transformer,
+        num_channels,
+        p_num_channels,
+        num_feature_levels,
+        max_num_ne_voxel,
+        pos_encode_method="image_coor",
+    ):
+        """Initializes the model.
+        Parameters:
+            transformer: torch module of the transformer architecture. See transformer.py
+            num_channels: [List] number of feature channels to bring from Depth Network Layer
+            num_feature_levels: [int] number of feature level
+        """
+        super().__init__()
+        self.transformer = transformer
+        hidden_dim = transformer.d_model
+        self.num_feature_levels = num_feature_levels
+        num_backbone_outs = len(num_channels)
+        self.num_backbone_outs = num_backbone_outs
+        assert num_backbone_outs == num_feature_levels
+        if num_feature_levels > 1:
+            i_input_proj_list = []
+            p_input_proj_list = []
+            for _ in range(num_backbone_outs):
+                i_in_channels = num_channels[_]
+                p_in_channels = p_num_channels[_]
+                i_input_proj_list.append(
+                    nn.Sequential(
+                        nn.Conv2d(i_in_channels, hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, hidden_dim),
+                    ))
+                p_input_proj_list.append(
+                    nn.Sequential(
+                        nn.Conv2d(p_in_channels, hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, hidden_dim),
+                    ))
+            self.i_input_proj = nn.ModuleList(i_input_proj_list)
+            self.p_input_proj = nn.ModuleList(p_input_proj_list)
+        else:
+            self.i_input_proj = nn.ModuleList([
+                nn.Sequential(
+                    nn.Conv2d(
+                        backbone.num_channels[0], hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                )
+            ])
+            self.p_input_proj = nn.ModuleList([
+                nn.Sequential(
+                    nn.Conv2d(
+                        backbone.num_channels[0], hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                )
+            ])
+
+        prior_prob = 0.01
+        for i_proj, p_proj in zip(self.i_input_proj, self.p_input_proj):
+            nn.init.xavier_uniform_(i_proj[0].weight, gain=1)
+            nn.init.xavier_uniform_(p_proj[0].weight, gain=1)
+            nn.init.constant_(i_proj[0].bias, 0)
+            nn.init.constant_(p_proj[0].bias, 0)
+        # add
+        self.max_num_ne_voxel = max_num_ne_voxel
+        self.pos_encode_method = pos_encode_method
+        assert self.pos_encode_method in ["image_coor", "depth", "depth_learn"]
+        if self.pos_encode_method == "image_coor":
+            self.q_position_embedding = PositionEmbeddingSineSparse(
+                num_pos_feats=self.transformer.q_model // 2, normalize=True)
+        elif self.pos_encode_method == "depth":
+            self.q_position_embedding = PositionEmbeddingSineSparseDepth(
+                num_pos_feats=self.transformer.q_model, normalize=True)
+        elif self.pos_encode_method == "depth_learn":
+            self.q_position_embedding = PositionEmbeddingLearnedDepth(
+                num_pos_feats=self.transformer.q_model)
+
+        self.i_position_embedding = PositionEmbeddingSine(
+            num_pos_feats=hidden_dim // 2, normalize=True)
+        self.p_position_embedding = PositionEmbeddingSine(
+            num_pos_feats=hidden_dim // 2, normalize=True)
+
+    def scatter_non_empty_voxel(self,
+                                v_feat,
+                                q_enh_feats,
+                                q_idxs,
+                                in_zeros=False):
+        if in_zeros:
+            s_feat = torch.zeros_like(v_feat)
+        else:
+            s_feat = v_feat
+
+        for idx, (q_feat, q_idx) in enumerate(zip(q_enh_feats, q_idxs)):
+            q_num = q_idx.shape[0]
+            q_feat_t = q_feat.transpose(1, 0)
+            s_feat[idx][:, q_idx[:, 0], q_idx[:, 1],
+                        q_idx[:, 2]] = q_feat_t[:, :q_num]
+        return s_feat
+
+    def forward(
+        self,
+        i_feats,
+        p_feats,
+    ):
+        """Parameters:
+            v_feat: 3d coord sparse voxel features (B, C, X, Y, Z)
+            grid: image coordinates of each v_features (B, X, Y, Z, 3)
+            i_feats: image features (consist of multi-level)
+            in_zeros: whether scatter to empty voxel or not
+
+        It returns a dict with the following elements:
+           - "srcs_enh": enhanced feature from camera coordinates
+        """
+
+        # get image feature with reduced channel
+        i_pos, p_pos = [], []
+        i_srcs, p_srcs = [], []
+        masks = []
+        for l, (i_src, p_src) in enumerate(zip(i_feats, p_feats)):
+            i_proj = self.i_input_proj[l](i_src)
+            p_proj = self.p_input_proj[l](p_src)
+            mask = torch.zeros(
+                (i_proj.shape[0], i_proj.shape[2], i_proj.shape[3]),
+                dtype=torch.bool,
+                device=i_src.device,
+            )
+            pos_i = self.i_position_embedding(NestedTensor(i_proj, mask)).to(
+                i_proj.dtype)
+            pos_p = self.p_position_embedding(NestedTensor(p_proj, mask)).to(
+                p_proj.dtype)
+            i_pos.append(pos_i)
+            p_pos.append(pos_p)
+            i_srcs.append(i_proj)
+            p_srcs.append(p_proj)
+            masks.append(mask)
+
+        q_enh_feats = self.transformer(i_srcs, masks, i_pos, p_srcs, p_pos)
+
+        return q_enh_feats
+
+
 class MLP(nn.Module):
     """Very simple multi-layer perceptron (also called FFN)"""
 
@@ -181,7 +325,7 @@ class MLP(nn.Module):
         return x
 
 
-def build(model_cfg):
+def build(model_cfg, model_name='ACTR'):
     parser = argparse.ArgumentParser(
         "Deformable DETR training and evaluation script",
         parents=[get_args_parser()])
@@ -197,10 +341,17 @@ def build(model_cfg):
     args.max_num_ne_voxel = model_cfg.max_num_ne_voxel
     args.num_feature_levels = len(model_cfg.num_channels)
 
-    transformer = build_deformable_transformer(args)
-    model = ACTR(
+    if model_name == 'ACTR':
+        model_class = ACTR
+        transformer = build_deformable_transformer(args)
+    elif model_name == 'IACTR':
+        model_class = IACTR
+        transformer = build_deformable_transformer(args, model_name=model_name)
+
+    model = model_class(
         transformer,
         num_feature_levels=args.num_feature_levels,
+        p_num_channels=model_cfg.get('p_num_channels', None),
         num_channels=num_channels,
         max_num_ne_voxel=args.max_num_ne_voxel,
         pos_encode_method=args.pos_encode_method)
