@@ -8,7 +8,15 @@ point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 
 model = dict(
     type='ParallelMVXMono3D',
-    use_li_fusion_layer=True,
+    use_li_fusion_layer=False,
+    aux_pts_loss_cls=dict(
+        type='FocalLoss',
+        use_sigmoid=True,
+        gamma=2.0,
+        alpha=0.25,
+        loss_weight=1.0),
+    aux_pts_loss_reg=dict(
+        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0),
     img_backbone=dict(
         type='ResNet',
         depth=101,

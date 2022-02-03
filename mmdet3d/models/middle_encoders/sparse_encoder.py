@@ -166,7 +166,7 @@ class SparseEncoder(nn.Module):
         spatial_features = spatial_features.view(N, C * D, H, W)
 
         if ret_lidar_features:
-            return spatial_features, lidar_features
+            return spatial_features, lidar_features, out
         else:
             return spatial_features
 
