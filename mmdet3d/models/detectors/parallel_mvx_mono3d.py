@@ -5,6 +5,9 @@ import mmcv
 from torch.nn import functional as F
 
 from mmdet3d.core import bbox3d2result
+from mmdet3d.core.bbox import box_np_ops
+from mmdet3d.utils import kitti_vis
+from mmdet3d.ops.spconv.structure import SparseConvTensor
 from mmdet.models import DETECTORS
 from mmdet.models.builder import build_head
 from mmdet3d.models.builder import build_fusion_layer, build_loss
@@ -44,8 +47,8 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         self.loss_img_w = torch.tensor(loss_img_w).cuda()
 
         # build aux layer
-        self.aux_pts_point_cls = torch.nn.Linear(128, 1, bias=False)
-        self.aus_pts_point_reg = torch.nn.Linear(128, 3, bias=False)
+        self.aux_pts_point_cls = torch.nn.Linear(64, 1, bias=False)
+        self.aux_pts_point_reg = torch.nn.Linear(64, 3, bias=False)
         self.aux_pts_loss_cls = build_loss(aux_pts_loss_cls)
         self.aux_pts_loss_reg = build_loss(aux_pts_loss_reg)
 
@@ -121,15 +124,15 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
 
-    def forward_aux_train(self, pts_aux_feats, img_aux_feats, gt_bboxes_3d):
+    def forward_aux_train(self, pts_aux_feats, img_aux_feats, gt_bboxes_3d, o_points=None):
 
-        def get_pts_aux_target(poitns, gt_bboxes_3d):
+        def get_pts_aux_target(points, gt_bboxes_3d):
             # from AuxPointLabeler
             num_pts = points.shape[0]
             gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
             gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy(
             )
-            points_numpy = points.tensor.clone().numpy()
+            points_numpy = points.clone().numpy()
             foreground_masks = box_np_ops.points_in_rbbox(
                 points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
             gt_foreground_pts = torch.tensor(foreground_masks.sum(1) != 0)
@@ -141,16 +144,48 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             gt_center_pts = torch.tensor(gt_center_pts)
             return gt_foreground_pts, gt_center_pts
 
+        def sp2list(spt, batch_size):
+            spt_list = []
+            for idx in range(batch_size):
+                mask = (spt.indices[:, 0] == idx)
+                features = spt.features[mask]
+                indices = spt.indices[mask]
+                spatial_shape = spt.spatial_shape
+                spt_list.append(
+                    SparseConvTensor(features, indices, spatial_shape,
+                                     batch_size))
+            return spt_list
+
         losses = dict()
+        batch_size = len(gt_bboxes_3d)
+
         # pts aux loss
-        points = self.pts_li_fusion_layer.coor2pts(pts_aux_feats)
-        gt_foreground_pts, gt_center_pts = get_pts_aux_target(points, gt_bboxes_3d)
-        pred_foreground_pts = self.aux_pts_point_cls(pts_aux_feats.features)
-        pred_center_pts = self.aux_pts_point_reg(pts_aux_feats.features)
-        aux_pts_loss_cls = self.aux_pts_point_cls()
+        pts_aux_feat_list = sp2list(pts_aux_feats, batch_size)
+        aux_pts_losses_cls, aux_pts_losses_reg = torch.tensor(
+            0.).cuda(), torch.tensor(0.).cuda()
+        for b, (pts_aux_feats,
+                gt_bbox_3d) in enumerate(zip(pts_aux_feat_list, gt_bboxes_3d)):
+            num_gt_bbox = gt_bbox_3d.tensor.shape[0]
+            points = self.pts_li_fusion_layer.coor2pts(pts_aux_feats)
+            gt_foreground_pts, gt_center_pts = get_pts_aux_target(
+                points.cpu(), gt_bbox_3d)
+            pos_inds = gt_foreground_pts.nonzero().squeeze()
+            pred_foreground_pts = self.aux_pts_point_cls(
+                pts_aux_feats.features)
+            pred_center_pts = self.aux_pts_point_reg(pts_aux_feats.features)
+            aux_pts_loss_cls = self.aux_pts_loss_cls(
+                pred_foreground_pts, gt_foreground_pts.to(torch.long).cuda(), avg_factor=pos_inds.shape[0])
 
+            aux_pts_loss_reg = self.aux_pts_loss_reg(
+                pred_center_pts[pos_inds], gt_center_pts[pos_inds].cuda(), avg_factor=pos_inds.shape[0]) 
 
-        return losses
+            aux_pts_losses_cls += aux_pts_loss_cls
+            aux_pts_losses_reg += aux_pts_loss_reg
+
+        # img aux loss
+        
+        return dict(loss_aux_pts_cls=aux_pts_losses_cls, 
+                    loss_aux_pts_reg=aux_pts_losses_reg)
 
     def input_visualize(self, imgs, gt_bboxes):
         img_norm_cfg = dict(
@@ -189,7 +224,6 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                       gt_bboxes_ignore=None):
         #  self.input_visualize(img, gt_bboxes)
         #  self.input_visualize(img, gt_bboxes_cam)
-        breakpoint()
 
         img_feats, pts_feats, pts_aux_feats = self.extract_feat(
             points, img=img, img_metas=img_metas, train=True)
@@ -200,7 +234,8 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         losses_img = self.img_bbox_head.forward_train(
             img_feats, img_metas, gt_bboxes, gt_labels, gt_bboxes_3d_cam,
             gt_labels_3d, centers2d, depths, attr_labels, gt_bboxes_ignore)
-        losses_aux = self.forward_aux_train(pts_aux_feats, img_feats)
+        losses_aux = self.forward_aux_train(pts_aux_feats, img_feats,
+                                            gt_bboxes_3d, points)
 
         losses = dict()
         for key in losses_pts:
@@ -211,8 +246,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             losses.update({'pts_' + key: losses_pts[key]})
         for key in losses_img:
             losses.update({'img_' + key: losses_img[key] * self.loss_img_w})
-
-        #  losses.update(losses_aux)
+        losses.update(losses_aux)
 
         return losses
 
