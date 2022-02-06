@@ -33,6 +33,7 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         with_mask=(version == 'mask'),
         for_parallel=True
     )
+    breakpoint()
 
     info_train_path = osp.join(root_path, f'{info_prefix}_infos_train.pkl')
     info_val_path = osp.join(root_path, f'{info_prefix}_infos_val.pkl')
