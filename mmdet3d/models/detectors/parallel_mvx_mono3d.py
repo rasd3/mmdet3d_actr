@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import cv2
 import mmcv
+from torch import nn as nn
 from torch.nn import functional as F
 
 from mmdet3d.core import bbox3d2result
@@ -13,6 +14,7 @@ from mmdet.models.builder import build_head
 from mmdet3d.models.builder import build_fusion_layer, build_loss
 from .mvx_faster_rcnn import DynamicMVXFasterRCNN
 from mmcv.runner import force_fp32
+from mmcv.cnn import build_conv_layer, build_upsample_layer, build_norm_layer
 
 IDX = 0
 
@@ -28,6 +30,12 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                  loss_img_w=1.,
                  aux_pts_loss_cls=None,
                  aux_pts_loss_reg=None,
+                 aux_img_loss_cls=None,
+                 upsample_strides=[0.5, 1, 2, 4],
+                 upsample_cfg=dict(type='deconv', bias=False),
+                 conv_cfg=dict(type='Conv2d', bias=False),
+                 norm_cfg=dict(type='BN', eps=1e-3, momentum=0.01),
+                 use_conv_for_no_stride=False,
                  **kwargs):
         super(ParallelMVXMono3D, self).__init__(**kwargs)
 
@@ -47,10 +55,39 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         self.loss_img_w = torch.tensor(loss_img_w).cuda()
 
         # build aux layer
-        self.aux_pts_point_cls = torch.nn.Linear(64, 1, bias=False)
-        self.aux_pts_point_reg = torch.nn.Linear(64, 3, bias=False)
+        self.num_classes = self.img_bbox_head.num_classes
+        self.aux_pts_cls = torch.nn.Linear(64, self.num_classes, bias=False)
+        self.aux_pts_reg = torch.nn.Linear(64, 3, bias=False)
         self.aux_pts_loss_cls = build_loss(aux_pts_loss_cls)
         self.aux_pts_loss_reg = build_loss(aux_pts_loss_reg)
+        self.aux_img_loss_cls = build_loss(aux_img_loss_cls)
+        in_channels = self.img_neck.out_channels
+        out_channel = 64
+        deblocks = []
+        for i in range(len(upsample_strides)):
+            stride = upsample_strides[i]
+            if stride > 1 or (stride == 1 and not use_conv_for_no_stride):
+                upsample_layer = build_upsample_layer(
+                    upsample_cfg,
+                    in_channels=in_channels,
+                    out_channels=out_channel,
+                    kernel_size=upsample_strides[i],
+                    stride=upsample_strides[i])
+            else:
+                stride = np.round(1 / stride).astype(np.int64)
+                upsample_layer = build_conv_layer(
+                    conv_cfg,
+                    in_channels=in_channels,
+                    out_channels=out_channel,
+                    kernel_size=stride,
+                    stride=stride)
+            deblock = nn.Sequential(upsample_layer,
+                                    build_norm_layer(norm_cfg, out_channel)[1],
+                                    nn.ReLU(inplace=True))
+            deblocks.append(deblock)
+        self.aux_img_cls_agg = nn.ModuleList(deblocks)
+        self.aux_img_cls = nn.Conv2d(out_channel * len(upsample_strides),
+                                     self.num_classes, 1)
 
     @torch.no_grad()
     @force_fp32()
@@ -124,18 +161,36 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
 
-    def forward_aux_train(self, pts_aux_feats, img_aux_feats, gt_bboxes_3d, o_points=None):
+    def forward_aux_train(
+        self,
+        pts_aux_feats,
+        img_aux_feats,
+        gt_bboxes_3d,
+        gt_labels_3d,
+        img_mask,
+    ):
+        """ Consist of pts, img and consistency loss
+        pts - pointwise segmentation loss
+            - center estimaion loss
+        img - pixelwise segmentation loss
+        con - differnece between pts seg with img seg
+        """
 
-        def get_pts_aux_target(points, gt_bboxes_3d):
+        def get_pts_aux_target(points, gt_bboxes_3d, gt_labels_3d):
             # from AuxPointLabeler
             num_pts = points.shape[0]
             gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
-            gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy(
-            )
-            points_numpy = points.clone().numpy()
+            points_numpy = points.cpu().clone().numpy()
             foreground_masks = box_np_ops.points_in_rbbox(
                 points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
-            gt_foreground_pts = torch.tensor(foreground_masks.sum(1) != 0)
+            gt_foreground_pts = points.new_zeros(points.shape[0]).to(
+                torch.long)
+            gt_foreground_pts += self.num_classes
+            pos_mask = torch.tensor(foreground_masks.sum(1) != 0)
+            pos_inds = pos_mask.nonzero().squeeze()
+            gt_foreground_pts_pos = gt_labels_3d[
+                foreground_masks[pos_inds].argmax(1)]
+            gt_foreground_pts[pos_inds] = gt_foreground_pts_pos
 
             gt_center_pts = np.zeros((num_pts, 3))
             for idx, gt_bbox in enumerate(gt_bboxes_3d_np):
@@ -163,29 +218,52 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         pts_aux_feat_list = sp2list(pts_aux_feats, batch_size)
         aux_pts_losses_cls, aux_pts_losses_reg = torch.tensor(
             0.).cuda(), torch.tensor(0.).cuda()
-        for b, (pts_aux_feats,
-                gt_bbox_3d) in enumerate(zip(pts_aux_feat_list, gt_bboxes_3d)):
+        for b, (pts_aux_feats, gt_bbox_3d, gt_label_3d) in enumerate(
+                zip(pts_aux_feat_list, gt_bboxes_3d, gt_labels_3d)):
             num_gt_bbox = gt_bbox_3d.tensor.shape[0]
             points = self.pts_li_fusion_layer.coor2pts(pts_aux_feats)
             gt_foreground_pts, gt_center_pts = get_pts_aux_target(
-                points.cpu(), gt_bbox_3d)
+                points, gt_bbox_3d, gt_label_3d)
             pos_inds = gt_foreground_pts.nonzero().squeeze()
-            pred_foreground_pts = self.aux_pts_point_cls(
-                pts_aux_feats.features)
-            pred_center_pts = self.aux_pts_point_reg(pts_aux_feats.features)
+            pred_foreground_pts = self.aux_pts_cls(pts_aux_feats.features)
+            pred_center_pts = self.aux_pts_reg(pts_aux_feats.features)
             aux_pts_loss_cls = self.aux_pts_loss_cls(
-                pred_foreground_pts, gt_foreground_pts.to(torch.long).cuda(), avg_factor=pos_inds.shape[0])
+                pred_foreground_pts,
+                gt_foreground_pts.to(torch.long).cuda(),
+                avg_factor=pos_inds.shape[0])
 
             aux_pts_loss_reg = self.aux_pts_loss_reg(
-                pred_center_pts[pos_inds], gt_center_pts[pos_inds].cuda(), avg_factor=pos_inds.shape[0]) 
+                pred_center_pts[pos_inds],
+                gt_center_pts[pos_inds].cuda(),
+                avg_factor=pos_inds.shape[0])
 
             aux_pts_losses_cls += aux_pts_loss_cls
             aux_pts_losses_reg += aux_pts_loss_reg
 
         # img aux loss
-        
-        return dict(loss_aux_pts_cls=aux_pts_losses_cls, 
-                    loss_aux_pts_reg=aux_pts_losses_reg)
+        cat_list = []
+        aux_img_losses_cls = torch.tensor(0.).cuda()
+        for i in range(len(img_aux_feats)):
+            cat_list.append(self.aux_img_cls_agg[i](img_aux_feats[i]))
+        cat_feat = torch.cat(cat_list, dim=1)
+        pred_foreground_img = self.aux_img_cls(cat_feat)
+        gt_foreground_img = nn.functional.interpolate(
+            img_mask, size=pred_foreground_img.shape[2:])
+        pred_foreground_img = pred_foreground_img.permute(0, 2, 3, 1).reshape(
+            batch_size, -1, self.num_classes)
+        gt_foreground_img = gt_foreground_img.squeeze().reshape(batch_size, -1)
+        for b in range(batch_size):
+            aux_img_loss_cls = self.aux_img_loss_cls(
+                pred_foreground_img[b], gt_foreground_img[b].to(torch.long))
+            aux_img_losses_cls += aux_img_loss_cls
+
+        # consistency loss
+
+        return dict(
+            loss_aux_pts_cls=aux_pts_losses_cls,
+            loss_aux_pts_reg=aux_pts_losses_reg,
+            loss_aux_img_cls=aux_img_losses_cls
+        )
 
     def input_visualize(self, imgs, gt_bboxes):
         img_norm_cfg = dict(
@@ -217,6 +295,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                       gt_foreground_pts=None,
                       gt_center_pts=None,
                       img=None,
+                      img_mask=None,
                       centers2d=None,
                       depths=None,
                       attr_labels=None,
@@ -235,7 +314,8 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             img_feats, img_metas, gt_bboxes, gt_labels, gt_bboxes_3d_cam,
             gt_labels_3d, centers2d, depths, attr_labels, gt_bboxes_ignore)
         losses_aux = self.forward_aux_train(pts_aux_feats, img_feats,
-                                            gt_bboxes_3d, points)
+                                            gt_bboxes_3d, gt_labels_3d,
+                                            img_mask)
 
         losses = dict()
         for key in losses_pts:

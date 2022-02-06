@@ -49,6 +49,15 @@ class DefaultFormatBundle(object):
             else:
                 img = np.ascontiguousarray(results['img'].transpose(2, 0, 1))
                 results['img'] = DC(to_tensor(img), stack=True)
+        if 'img_mask' in results:
+            if isinstance(results['img_mask'], list):
+                # process multiple imgs in single frame
+                imgs = [img for img in results['img_mask']]
+                imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
+                results['img_mask'] = DC(to_tensor(imgs[None, ...]), stack=True)
+            else:
+                img = np.ascontiguousarray(results['img_mask'])
+                results['img_mask'] = DC(to_tensor(img[None, ...]), stack=True)
         for key in [
                 'proposals', 'gt_bboxes', 'gt_bboxes_cam', 'gt_bboxes_ignore',
                 'gt_labels', 'gt_labels_3d', 'attr_labels',

@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import cv2
 import warnings
+import mmcv
 from mmcv import is_tuple_of
 from mmcv.utils import build_from_cfg
 
@@ -266,9 +267,10 @@ class ObjectSample(object):
             Defaults to False.
     """
 
-    def __init__(self, db_sampler, sample_2d=False):
+    def __init__(self, db_sampler, sample_2d=False, sample_2dmask=False):
         self.sampler_cfg = db_sampler
         self.sample_2d = sample_2d
+        self.sample_2dmask = sample_2dmask
         if 'type' not in db_sampler.keys():
             db_sampler['type'] = 'DataBaseSampler'
         self.db_sampler = build_from_cfg(db_sampler, OBJECTSAMPLERS)
@@ -335,9 +337,17 @@ class ObjectSample(object):
                 img=img,
                 img_dict=img_dict)
             #  cv2.imwrite('img_after.png', sampled_dict['img'])
+            #  cv2.imwrite('img_after_mask.png', (sampled_dict['img_mask'] != 0).astype(np.uint8) * 255)
         else:
             sampled_dict = self.db_sampler.sample_all(
                 gt_bboxes_3d.tensor.numpy(), gt_labels_3d, img=None)
+
+        if self.sample_2dmask:
+            input_dict['img_mask'] = sampled_dict['img_mask']
+            input_dict['img_fields'].append('img_mask')
+            sampled_dict.pop('img_mask')
+            if len(sampled_dict.keys()) == 0:
+                sampled_dict = None
 
         if sampled_dict is not None:
             sampled_gt_bboxes_3d = sampled_dict['gt_bboxes_3d']
@@ -399,6 +409,48 @@ class ObjectSample(object):
         repr_str += f' sample_groups={self.sampler_cfg.sample_groups}'
         return repr_str
 
+
+@PIPELINES.register_module()
+class Normalize3D:
+    """Normalize the image.
+
+    Added key is "img_norm_cfg".
+
+    Args:
+        mean (sequence): Mean values of 3 channels.
+        std (sequence): Std values of 3 channels.
+        to_rgb (bool): Whether to convert the image from BGR to RGB,
+            default is true.
+    """
+
+    def __init__(self, mean, std, to_rgb=True):
+        self.mean = np.array(mean, dtype=np.float32)
+        self.std = np.array(std, dtype=np.float32)
+        self.to_rgb = to_rgb
+
+    def __call__(self, results):
+        """Call function to normalize images.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Normalized results, 'img_norm_cfg' key is added into
+                result dict.
+        """
+        for key in results.get('img_fields', ['img']):
+            if key is 'img_mask':
+                continue
+            results[key] = mmcv.imnormalize(results[key], self.mean, self.std,
+                                            self.to_rgb)
+        results['img_norm_cfg'] = dict(
+            mean=self.mean, std=self.std, to_rgb=self.to_rgb)
+        return results
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += f'(mean={self.mean}, std={self.std}, to_rgb={self.to_rgb})'
+        return repr_str
 
 @PIPELINES.register_module()
 class ObjectNoise(object):
@@ -1497,18 +1549,20 @@ class AuxPointLabeler(object):
         gt_bboxes_3d = results['gt_bboxes_3d']
         num_pts = points.shape[0]
 
-        gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
-        gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy()
-        points_numpy = points.tensor.clone().numpy()
-        foreground_masks = box_np_ops.points_in_rbbox(
-            points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
-        results['gt_foreground_pts'] = torch.tensor(
-            foreground_masks.sum(1) != 0)
+        if self.use_foreground_pts:
+            gt_bboxes_3d_np = gt_bboxes_3d.tensor.clone().numpy()
+            gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.clone().numpy()
+            points_numpy = points.tensor.clone().numpy()
+            foreground_masks = box_np_ops.points_in_rbbox(
+                points_numpy, gt_bboxes_3d_np, origin=(0.5, 0.5, 0.5))
+            results['gt_foreground_pts'] = torch.tensor(
+                foreground_masks.sum(1) != 0)
 
-        gt_center_pts = np.zeros((num_pts, 3))
-        for idx, gt_bbox in enumerate(gt_bboxes_3d_np):
-            gt_center_pts[foreground_masks[:, idx]] = gt_bboxes_3d_np[
-                idx, :3] - points_numpy[foreground_masks[:, idx]][:, :3]
-        results['gt_center_pts'] = torch.tensor(gt_center_pts)
+        if self.use_center_pts:
+            gt_center_pts = np.zeros((num_pts, 3))
+            for idx, gt_bbox in enumerate(gt_bboxes_3d_np):
+                gt_center_pts[foreground_masks[:, idx]] = gt_bboxes_3d_np[
+                    idx, :3] - points_numpy[foreground_masks[:, idx]][:, :3]
+            results['gt_center_pts'] = torch.tensor(gt_center_pts)
 
         return results

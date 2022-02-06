@@ -228,8 +228,16 @@ class DataBaseSampler(object):
                 db_infos[name] = filtered_infos
         return db_infos
 
-    def img_update(self, img, gt_bboxes, gt_all_bboxes, gt_all_bboxes_3d,
-                   sampled_gt_bboxes_2d, sampled_dict, img_dict):
+    def img_update(self,
+                   img,
+                   gt_bboxes,
+                   gt_all_bboxes,
+                   gt_all_bboxes_3d,
+                   sampled_gt_bboxes_2d,
+                   sampled_dict,
+                   img_dict,
+                   img_mask=None,
+                   gt_all_labels=None):
 
         def img2mask(img):
             return img.sum(2) != 0
@@ -248,12 +256,8 @@ class DataBaseSampler(object):
             mask_2 = np.zeros((rd[0] - lu[0], rd[1] - lu[1]), dtype=np.bool)
             mask_1[(coor1 - lu)[0]:(coor1 - lu)[0] + mask1.shape[0],
                    (coor1 - lu)[1]:(coor1 - lu)[1] + mask1.shape[1]] = mask1
-            try:
-                mask_2[(coor2 - lu)[0]:(coor2 - lu)[0] + mask2.shape[0],
-                       (coor2 -
-                        lu)[1]:(coor2 - lu)[1] + mask2.shape[1]] = mask2
-            except:
-                abcd = 1
+            mask_2[(coor2 - lu)[0]:(coor2 - lu)[0] + mask2.shape[0],
+                   (coor2 - lu)[1]:(coor2 - lu)[1] + mask2.shape[1]] = mask2
             mask_btw = np.logical_and(mask_1, np.logical_not(mask_2))
             mask_b = mask_btw[(coor1 - lu)[0]:(coor1 - lu)[0] + mask1.shape[0],
                               (coor1 - lu)[1]:(coor1 - lu)[1] + mask1.shape[1]]
@@ -279,7 +283,6 @@ class DataBaseSampler(object):
             gts_img.append(cv2.imread(samp['img_path']))
             gts_coor.append(samp['img_bbox_coor'][:2][::-1])
         for i in range(gt_num, gts_num):
-            samp = sampled_dict[i - gt_num]
             mask = img2mask(gts_img[i])
             for j in range(gts_num):
                 if ov_iou[i, j] > 0.01 and dist[i] > dist[j]:
@@ -303,11 +306,16 @@ class DataBaseSampler(object):
             mask = mask[:mask.shape[0] + cut_x, :mask.shape[1] + cut_y]
             if mask.sum() == 0:
                 continue
-            img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] + cut_x,
-                gts_coor[i][1]:gts_coor[i][1] + gts_img[i].shape[1] +
-                cut_y][mask] = gts_img[i][:gts_img[i].shape[0] +
-                                          cut_x, :gts_img[i].shape[1] +
-                                          cut_y][mask]
+            if i >= gt_num:
+                img[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
+                    cut_x,
+                    gts_coor[i][1]:gts_coor[i][1] + gts_img[i].shape[1] +
+                    cut_y][mask] = gts_img[i][:gts_img[i].shape[0] +
+                                              cut_x, :gts_img[i].shape[1] +
+                                              cut_y][mask]
+            img_mask[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
+                     cut_x, gts_coor[i][1]:gts_coor[i][1] +
+                     gts_img[i].shape[1] + cut_y][mask] = gt_all_labels[i]
 
         return img
 
@@ -340,6 +348,9 @@ class DataBaseSampler(object):
                 - points (np.ndarray): sampled points
                 - group_ids (np.ndarray): ids of sampled ground truths
         """
+        def img2mask(img):
+            return img.sum(2) != 0
+
         sampled_num_dict = {}
         sample_num_per_class = []
         for class_name, max_sample_num in zip(self.sample_classes,
@@ -434,7 +445,33 @@ class DataBaseSampler(object):
                         avoid_coll_boxes_2d = np.concatenate(
                             [avoid_coll_boxes_2d, sampled_gt_box_2d], axis=0)
 
-        ret = None
+        ret = dict()
+        # for gts_mask
+        img_mask = np.zeros_like(img)[..., 0]
+        img_mask.fill(3)
+        gts_img, gts_coor = [], []
+        gt_num = gt_bboxes.shape[0]
+        for i in range(gt_num):
+            bbox, disc = avoid_coll_boxes_2d[i], img_dict['disc'][i]
+            if img_dict['path'][i] == ' ':
+                gts_img.append(np.array([0]))
+            else:
+                gts_img.append(cv2.imread(img_dict['path'][i]))
+            gts_coor.append(
+                np.array([bbox[1] + disc[1], bbox[0] + disc[0]], dtype=np.int))
+        for i in range(gt_num):
+            if img_dict['path'][i] == ' ':
+                continue
+            mask = img2mask(gts_img[i])
+            cut_x = min(img.shape[0] - gts_coor[i][0] - gts_img[i].shape[0], 0)
+            cut_y = min(img.shape[1] - gts_coor[i][1] - gts_img[i].shape[1], 0)
+            img_mask[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
+                     cut_x, gts_coor[i][1]:gts_coor[i][1] +
+                     gts_img[i].shape[1] + cut_y][mask] = gt_labels[i]
+        ret.update({'img_mask': img_mask})
+
+        
+
         if len(sampled) > 0:
             sampled_gt_bboxes = np.concatenate(sampled_gt_bboxes, axis=0)
             # center = sampled_gt_bboxes[:, 0:3]
@@ -450,11 +487,11 @@ class DataBaseSampler(object):
 
                 s_points_list.append(s_points)
 
-            gt_labels = np.array([self.cat2label[s['name']] for s in sampled],
-                                 dtype=np.long)
-            ret = {
+            sampled_gt_labels = np.array(
+                [self.cat2label[s['name']] for s in sampled], dtype=np.long)
+            ret.update({
                 'gt_labels_3d':
-                gt_labels,
+                sampled_gt_labels,
                 'gt_bboxes_3d':
                 sampled_gt_bboxes,
                 'points':
@@ -462,14 +499,22 @@ class DataBaseSampler(object):
                 'group_ids':
                 np.arange(gt_bboxes.shape[0],
                           gt_bboxes.shape[0] + len(sampled))
-            }
+            })
 
             if self.with_img:
                 sampled_gt_bboxes_2d = np.concatenate(sampled_gt_bboxes_2d)
-                img = self.img_update(img, gt_bboxes, avoid_coll_boxes_2d,
-                                      avoid_coll_boxes, sampled_gt_bboxes_2d,
-                                      sampled, img_dict)
-                ret.update({'img': img, 'gt_bboxes_2d': sampled_gt_bboxes_2d})
+                gt_all_labels = np.concatenate([gt_labels, sampled_gt_labels])
+                img = self.img_update(
+                    img,
+                    gt_bboxes,
+                    avoid_coll_boxes_2d,
+                    avoid_coll_boxes,
+                    sampled_gt_bboxes_2d,
+                    sampled,
+                    img_dict,
+                    img_mask=img_mask,
+                    gt_all_labels=gt_all_labels)
+                ret.update({'img': img, 'gt_bboxes_2d': sampled_gt_bboxes_2d, 'img_mask': img_mask})
             if gt_bboxes_3d_cam is not None:
                 sampled_gt_bboxes_cam = np.concatenate(sampled_gt_bboxes_cam)
                 ret.update({
@@ -538,7 +583,8 @@ class DataBaseSampler(object):
             #  overlaps_iou = box_np_ops.iou_jit(total_cv, total_cv)
             overlaps_iou[diag, diag] = 0.
             for i in range(num_gt, num_gt + num_sampled):
-                if overlaps_iou[i].max() > self.overlap_2d_thres:
+                if (overlaps_iou[i].max() > self.overlap_2d_thres) or (
+                        overlaps_iou[:, i].max() > self.overlap_2d_thres):
                     overlaps_iou[i] = 0.
                     overlaps_iou[:, i] = 0.
                     valid_check[i] = False
