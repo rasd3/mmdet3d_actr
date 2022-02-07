@@ -550,6 +550,11 @@ class IACTR(BaseModule):
             i_feats=img_feats,
             p_feats=pts_img_list,
         )
+        if self.fusion_method == 'replace':
+            pass
+        elif self.fusion_method == 'sum':
+            for s in range(scale_size):
+                enh_feat[s] = img_feats[s] + enh_feat[s]
 
         return enh_feat
 

@@ -6,6 +6,7 @@ from torch import nn as nn
 from torch.nn import functional as F
 
 from mmdet3d.core import box3d_multiclass_nms, xywhr2xyxyr
+from mmdet3d.core.bbox.structures.cam_box3d import CameraInstance3DBoxes
 from mmdet3d.core.bbox import points_cam2img, points_img2cam
 from mmdet.core import distance2bbox, multi_apply
 from mmdet.models.builder import HEADS, build_loss
@@ -841,6 +842,8 @@ class PGDHead(FCOSMono3DHead):
             f'attr_preds: {len(cls_scores)}, {len(bbox_preds)}, ' \
             f'{len(dir_cls_preds)}, {len(depth_cls_preds)}, {len(weights)}' \
             f'{len(centernesses)}, {len(attr_preds)} are inconsistent.'
+        ori_box_type_3d = img_metas[0]['box_type_3d']
+        img_metas[0]['box_type_3d'] = CameraInstance3DBoxes
         num_levels = len(cls_scores)
 
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]

@@ -10,7 +10,7 @@ model = dict(
     type='ParallelMVXMono3D',
     loss_pts_w = 1.,
     loss_img_w = 0.125,
-    use_li_fusion_layer=False,
+    use_li_fusion_layer=True,
     aux_pts_loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,
@@ -19,6 +19,14 @@ model = dict(
         loss_weight=1.0),
     aux_pts_loss_reg=dict(
         type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0),
+    aux_img_loss_cls=dict(
+        type='FocalLoss',
+        use_sigmoid=True,
+        gamma=2.0,
+        alpha=0.25,
+        loss_weight=1.0),
+    aux_con_loss_cls=dict(
+        type='KnowledgeDistillationKLDivLoss', loss_weight=1.0, T=10),
     img_backbone=dict(
         type='ResNet',
         depth=101,
@@ -103,9 +111,9 @@ model = dict(
             num_bins=80,
             num_channels=[256, 256, 256, 256],
             p_num_channels=[16, 32, 64, 64],
-            query_num_feat=64,
+            query_num_feat=256,
             num_enc_layers=4,
-            max_num_ne_voxel=36000,
+            max_num_ne_voxel=16000,
             pos_encode_method='depth')),
     pts_voxel_layer=dict(
         max_num_points=-1,
@@ -269,7 +277,11 @@ train_pipeline = [
         with_img_gt=True,
         with_bbox_depth=True,
     ),
-    dict(type='ObjectSample', db_sampler=db_sampler, sample_2d=True),
+    dict(
+        type='ObjectSample',
+        db_sampler=db_sampler,
+        sample_2d=True,
+        sample_2dmask=True),
     dict(type='Resize', img_scale=(1242, 375), keep_ratio=True),
     dict(
         type='GlobalRotScaleTrans',
@@ -280,7 +292,7 @@ train_pipeline = [
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='PointShuffle'),
-    dict(type='Normalize', **img_norm_cfg),
+    dict(type='Normalize3D', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     dict(
         type='AuxPointLabeler',
@@ -292,9 +304,9 @@ train_pipeline = [
     dict(
         type='Collect3D',
         keys=[
-            'points', 'img', 'gt_bboxes_3d', 'gt_bboxes_3d_cam',
+            'points', 'img', 'img_mask', 'gt_bboxes_3d', 'gt_bboxes_3d_cam',
             'gt_labels_3d', 'gt_labels', 'gt_bboxes', 'gt_bboxes_cam',
-            'centers2d', 'depths', 'gt_foreground_pts', 'gt_center_pts'
+            'centers2d', 'depths'
         ]),
 ]
 test_pipeline = [
@@ -313,7 +325,7 @@ test_pipeline = [
                 scale_ratio_range=[1., 1.],
                 translation_std=[0, 0, 0]),
             dict(type='RandomFlip3D'),
-            dict(type='Normalize', **img_norm_cfg),
+            dict(type='Normalize3D', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(
                 type='PointsRangeFilter', point_cloud_range=point_cloud_range),
@@ -337,7 +349,7 @@ eval_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=3,
+    samples_per_gpu=2,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',

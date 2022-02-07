@@ -304,7 +304,7 @@ class IACTR(nn.Module):
             p_srcs.append(p_proj)
             masks.append(mask)
 
-        q_enh_feats = self.transformer(i_srcs, masks, i_pos, p_srcs, p_pos)
+        q_enh_feats = self.transformer(p_srcs, masks, p_pos, i_srcs, i_pos)
 
         return q_enh_feats
 

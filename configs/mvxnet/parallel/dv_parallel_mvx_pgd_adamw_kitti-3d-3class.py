@@ -8,7 +8,7 @@ point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 
 model = dict(
     type='ParallelMVXMono3D',
-    use_li_fusion_layer=False,
+    use_li_fusion_layer=True,
     aux_pts_loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,
@@ -23,6 +23,8 @@ model = dict(
         gamma=2.0,
         alpha=0.25,
         loss_weight=1.0),
+    aux_con_loss_cls=dict(
+        type='KnowledgeDistillationKLDivLoss', loss_weight=1.0, T=10),
     img_backbone=dict(
         type='ResNet',
         depth=101,
@@ -107,7 +109,7 @@ model = dict(
             num_bins=80,
             num_channels=[256, 256, 256, 256],
             p_num_channels=[16, 32, 64, 64],
-            query_num_feat=64,
+            query_num_feat=256,
             num_enc_layers=4,
             max_num_ne_voxel=36000,
             pos_encode_method='depth')),
