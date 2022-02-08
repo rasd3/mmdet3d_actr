@@ -318,7 +318,7 @@ test_pipeline = [
         pts_scale_ratio=1,
         flip=False,
         transforms=[
-            dict(type='Resize', multiscale_mode='value', keep_ratio=True),
+            #  dict(type='Resize', multiscale_mode='value', keep_ratio=True),
             dict(
                 type='GlobalRotScaleTrans',
                 rot_range=[0, 0],
@@ -416,4 +416,4 @@ evaluation = dict(interval=2, pipeline=eval_pipeline)
 find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
-load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
+load_from = './model_zoo/pgd_r101_caffe_fpn_gn_for_fin.pth'

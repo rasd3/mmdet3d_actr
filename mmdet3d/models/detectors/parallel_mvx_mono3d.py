@@ -395,6 +395,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                 The outer list corresponds to each image. The inner list
                 corresponds to each class.
         """
+        img_metas[0]['scale_factor'] = torch.tensor([1.0, 1.0, 1.0, 1.0])
         outs = self.img_bbox_head(img_feats)
         bbox_outputs = self.img_bbox_head.get_bboxes(
             *outs, img_metas, rescale=rescale)

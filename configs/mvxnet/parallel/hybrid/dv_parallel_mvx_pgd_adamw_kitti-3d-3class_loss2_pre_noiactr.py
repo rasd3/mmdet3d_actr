@@ -10,7 +10,7 @@ model = dict(
     type='ParallelMVXMono3D',
     loss_pts_w = 1.,
     loss_img_w = 0.125,
-    use_li_fusion_layer=True,
+    use_li_fusion_layer=False,
     aux_pts_loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,
@@ -416,4 +416,4 @@ evaluation = dict(interval=2, pipeline=eval_pipeline)
 find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
-load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
+load_from = './model_zoo/pgd_r101_caffe_fpn_gn_for_fin.pth'
