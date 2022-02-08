@@ -346,8 +346,8 @@ class ObjectSample(object):
             input_dict['img_mask'] = sampled_dict['img_mask']
             input_dict['img_fields'].append('img_mask')
             sampled_dict.pop('img_mask')
-            if len(sampled_dict.keys()) == 0:
-                sampled_dict = None
+        if len(sampled_dict.keys()) == 0:
+            sampled_dict = None
 
         if sampled_dict is not None:
             sampled_gt_bboxes_3d = sampled_dict['gt_bboxes_3d']
@@ -439,7 +439,7 @@ class Normalize3D:
                 result dict.
         """
         for key in results.get('img_fields', ['img']):
-            if key is 'img_mask':
+            if key == 'img_mask':
                 continue
             results[key] = mmcv.imnormalize(results[key], self.mean, self.std,
                                             self.to_rgb)

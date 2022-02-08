@@ -21,8 +21,6 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         version (str): Dataset version.
         out_dir (str): Output directory of the groundtruth database info.
     """
-    kitti.create_kitti_info_file(root_path, info_prefix)
-    kitti.create_reduced_point_cloud(root_path, info_prefix)
     create_groundtruth_database(
         'KittiDataset',
         root_path,
@@ -32,8 +30,10 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         mask_anno_path='instances_train.json',
         with_mask=(version == 'mask'),
         for_parallel=True
-    )
+        )
     breakpoint()
+    kitti.create_kitti_info_file(root_path, info_prefix)
+    kitti.create_reduced_point_cloud(root_path, info_prefix)
 
     info_train_path = osp.join(root_path, f'{info_prefix}_infos_train.pkl')
     info_val_path = osp.join(root_path, f'{info_prefix}_infos_val.pkl')

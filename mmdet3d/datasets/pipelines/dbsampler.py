@@ -348,6 +348,7 @@ class DataBaseSampler(object):
                 - points (np.ndarray): sampled points
                 - group_ids (np.ndarray): ids of sampled ground truths
         """
+
         def img2mask(img):
             return img.sum(2) != 0
 
@@ -447,30 +448,32 @@ class DataBaseSampler(object):
 
         ret = dict()
         # for gts_mask
-        img_mask = np.zeros_like(img)[..., 0]
-        img_mask.fill(3)
-        gts_img, gts_coor = [], []
-        gt_num = gt_bboxes.shape[0]
-        for i in range(gt_num):
-            bbox, disc = avoid_coll_boxes_2d[i], img_dict['disc'][i]
-            if img_dict['path'][i] == ' ':
-                gts_img.append(np.array([0]))
-            else:
-                gts_img.append(cv2.imread(img_dict['path'][i]))
-            gts_coor.append(
-                np.array([bbox[1] + disc[1], bbox[0] + disc[0]], dtype=np.int))
-        for i in range(gt_num):
-            if img_dict['path'][i] == ' ':
-                continue
-            mask = img2mask(gts_img[i])
-            cut_x = min(img.shape[0] - gts_coor[i][0] - gts_img[i].shape[0], 0)
-            cut_y = min(img.shape[1] - gts_coor[i][1] - gts_img[i].shape[1], 0)
-            img_mask[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
-                     cut_x, gts_coor[i][1]:gts_coor[i][1] +
-                     gts_img[i].shape[1] + cut_y][mask] = gt_labels[i]
-        ret.update({'img_mask': img_mask})
-
-        
+        if self.with_img:
+            img_mask = np.zeros_like(img)[..., 0]
+            img_mask.fill(3)
+            gts_img, gts_coor = [], []
+            gt_num = gt_bboxes.shape[0]
+            for i in range(gt_num):
+                bbox, disc = avoid_coll_boxes_2d[i], img_dict['disc'][i]
+                if img_dict['path'][i] == ' ':
+                    gts_img.append(np.array([0]))
+                else:
+                    gts_img.append(cv2.imread(img_dict['path'][i]))
+                gts_coor.append(
+                    np.array([bbox[1] + disc[1], bbox[0] + disc[0]],
+                             dtype=np.int))
+            for i in range(gt_num):
+                if img_dict['path'][i] == ' ':
+                    continue
+                mask = img2mask(gts_img[i])
+                cut_x = min(
+                    img.shape[0] - gts_coor[i][0] - gts_img[i].shape[0], 0)
+                cut_y = min(
+                    img.shape[1] - gts_coor[i][1] - gts_img[i].shape[1], 0)
+                img_mask[gts_coor[i][0]:gts_coor[i][0] + gts_img[i].shape[0] +
+                         cut_x, gts_coor[i][1]:gts_coor[i][1] +
+                         gts_img[i].shape[1] + cut_y][mask] = gt_labels[i]
+            ret.update({'img_mask': img_mask})
 
         if len(sampled) > 0:
             sampled_gt_bboxes = np.concatenate(sampled_gt_bboxes, axis=0)
@@ -514,7 +517,11 @@ class DataBaseSampler(object):
                     img_dict,
                     img_mask=img_mask,
                     gt_all_labels=gt_all_labels)
-                ret.update({'img': img, 'gt_bboxes_2d': sampled_gt_bboxes_2d, 'img_mask': img_mask})
+                ret.update({
+                    'img': img,
+                    'gt_bboxes_2d': sampled_gt_bboxes_2d,
+                    'img_mask': img_mask
+                })
             if gt_bboxes_3d_cam is not None:
                 sampled_gt_bboxes_cam = np.concatenate(sampled_gt_bboxes_cam)
                 ret.update({
