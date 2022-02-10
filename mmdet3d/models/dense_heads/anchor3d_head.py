@@ -264,6 +264,10 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             pos_dir_weights = dir_weights[pos_inds]
 
         if self.use_iou_regressor:
+            if len(anchor_list[0].shape) > 2:
+                for i in range(len(anchor_list)):
+                    anchor_list[i] = anchor_list[i].reshape(-1, self.box_code_size)
+
             anchor_list = torch.cat(anchor_list)
             pos_anchor = anchor_list[pos_inds]
             iou_reg_preds = iou_reg_preds.permute(0, 2, 3, 1).reshape(-1, 1)
@@ -645,6 +649,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
                 else:
                     max_scores, _ = scores[:, :-1].max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
+                topk_inds = topk_inds[max_scores[topk_inds] > 0.3]
                 anchors = anchors[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
                 scores = scores[topk_inds, :]
@@ -685,7 +690,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             mlvl_dir_scores,
             mlvl_labels,
             mlvl_scores[torch.arange(num_data), mlvl_labels],
-            mlvl_iou_preds.squeeze(),
+            mlvl_iou_preds[:, 0],
             mlvl_selected_anchor,
             iou_threshold=score_thr,
             pre_max_size=cfg.nms_pre,

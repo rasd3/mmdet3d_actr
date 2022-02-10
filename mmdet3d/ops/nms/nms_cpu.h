@@ -185,7 +185,7 @@ py::list IOU_weighted_rotate_non_max_suppression_cpu(
 {
     // setting hyperparameters
     DType cnt_thresh = 2.6;
-    std::vector<DType> nms_sigma_dist_interval_r = {0, 20, 40, 60};
+    std::vector<DType> nms_sigma_dist_interval_r = {0, 20, 40, 60, 70.4};
     std::vector<DType> nms_sigma_square_r = {0.0009, 0.009, 0.1, 1};
     DType suppressed_thresh = 0.3;
     // end setting hyperparameters

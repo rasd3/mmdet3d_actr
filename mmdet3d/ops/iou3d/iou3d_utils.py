@@ -312,7 +312,7 @@ def rotate_weighted_nms(
     anchors_np = anchors.cpu().numpy()
 
     if len(dets_np) == 0:
-        box_ret_np, dir_ret_list, labels_ret_list, scores_ret_list = [
+        box_ret_np, dir_ret_np, labels_ret_np, scores_ret_np = [
             np.array([], dtype=np.int64)
         ] * 4
     else:
