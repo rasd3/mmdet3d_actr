@@ -26,10 +26,15 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
     def __init__(self,
                  img_bbox_head,
-                 pts_li_fusion_layer,
                  use_li_fusion_layer,
+                 pts_li_fusion_layer=None,
+                 pos_li_fusion_layer='kim',
                  loss_pts_w=1.,
                  loss_img_w=1.,
+                 use_aux_pts_cls=True,
+                 use_aux_pts_reg=True,
+                 use_aux_img_cls=True,
+                 use_aux_con_cls=True,
                  aux_pts_loss_cls=None,
                  aux_pts_loss_reg=None,
                  aux_img_loss_cls=None,
@@ -50,8 +55,9 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
         # build li fusion layer
         self.use_li_fusion_layer = use_li_fusion_layer
-        #  if self.use_li_fusion_layer:
-        self.pts_li_fusion_layer = build_fusion_layer(pts_li_fusion_layer)
+        self.pos_li_fusion_layer = pos_li_fusion_layer
+        if self.use_li_fusion_layer:
+            self.pts_li_fusion_layer = build_fusion_layer(pts_li_fusion_layer)
 
         # assign pts loss & img loss weight
         self.loss_pts_w = torch.tensor(loss_pts_w).cuda()
@@ -59,42 +65,52 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
         # build aux layer
         self.num_classes = self.img_bbox_head.num_classes
-        self.aux_pts_cls = torch.nn.Linear(64, self.num_classes, bias=False)
-        self.aux_pts_reg = torch.nn.Linear(64, 3, bias=False)
-        self.aux_pts_loss_cls = build_loss(aux_pts_loss_cls)
-        self.aux_pts_loss_reg = build_loss(aux_pts_loss_reg)
-        self.aux_img_loss_cls = build_loss(aux_img_loss_cls)
-        if self.num_classes == 1:
-            self.aux_con_loss_cls = build_loss(aux_pts_loss_reg)
-        else:
-            self.aux_con_loss_cls = build_loss(aux_con_loss_cls)
-        in_channels = self.img_neck.out_channels
-        out_channel = 64
-        deblocks = []
-        for i in range(len(upsample_strides)):
-            stride = upsample_strides[i]
-            if stride > 1 or (stride == 1 and not use_conv_for_no_stride):
-                upsample_layer = build_upsample_layer(
-                    upsample_cfg,
-                    in_channels=in_channels,
-                    out_channels=out_channel,
-                    kernel_size=upsample_strides[i],
-                    stride=upsample_strides[i])
+        self.use_aux_pts_cls = use_aux_pts_cls
+        self.use_aux_pts_reg = use_aux_pts_reg
+        self.use_aux_img_cls = use_aux_img_cls
+        self.use_aux_con_cls = use_aux_con_cls
+        if use_aux_pts_cls:
+            self.aux_pts_cls = torch.nn.Linear(
+                64, self.num_classes, bias=False)
+            self.aux_pts_loss_cls = build_loss(aux_pts_loss_cls)
+        if use_aux_pts_reg:
+            self.aux_pts_reg = torch.nn.Linear(64, 3, bias=False)
+            self.aux_pts_loss_reg = build_loss(aux_pts_loss_reg)
+        if use_aux_img_cls:
+            in_channels = self.img_neck.out_channels
+            out_channel = 64
+            deblocks = []
+            self.aux_img_loss_cls = build_loss(aux_img_loss_cls)
+            for i in range(len(upsample_strides)):
+                stride = upsample_strides[i]
+                if stride > 1 or (stride == 1 and not use_conv_for_no_stride):
+                    upsample_layer = build_upsample_layer(
+                        upsample_cfg,
+                        in_channels=in_channels,
+                        out_channels=out_channel,
+                        kernel_size=upsample_strides[i],
+                        stride=upsample_strides[i])
+                else:
+                    stride = np.round(1 / stride).astype(np.int64)
+                    upsample_layer = build_conv_layer(
+                        conv_cfg,
+                        in_channels=in_channels,
+                        out_channels=out_channel,
+                        kernel_size=stride,
+                        stride=stride)
+                deblock = nn.Sequential(
+                    upsample_layer,
+                    build_norm_layer(norm_cfg, out_channel)[1],
+                    nn.ReLU(inplace=True))
+                deblocks.append(deblock)
+            self.aux_img_cls_agg = nn.ModuleList(deblocks)
+            self.aux_img_cls = nn.Conv2d(out_channel * len(upsample_strides),
+                                         self.num_classes, 1)
+        if use_aux_con_cls:
+            if self.num_classes == 1:
+                self.aux_con_loss_cls = build_loss(aux_pts_loss_reg)
             else:
-                stride = np.round(1 / stride).astype(np.int64)
-                upsample_layer = build_conv_layer(
-                    conv_cfg,
-                    in_channels=in_channels,
-                    out_channels=out_channel,
-                    kernel_size=stride,
-                    stride=stride)
-            deblock = nn.Sequential(upsample_layer,
-                                    build_norm_layer(norm_cfg, out_channel)[1],
-                                    nn.ReLU(inplace=True))
-            deblocks.append(deblock)
-        self.aux_img_cls_agg = nn.ModuleList(deblocks)
-        self.aux_img_cls = nn.Conv2d(out_channel * len(upsample_strides),
-                                     self.num_classes, 1)
+                self.aux_con_loss_cls = build_loss(aux_con_loss_cls)
 
     @torch.no_grad()
     @force_fp32()
@@ -120,7 +136,8 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         coors_batch = torch.cat(coors_batch, dim=0)
         return points, coors_batch
 
-    def extract_pts_feat(self, points, img_feats, img_metas, train):
+    def extract_pts_feat(self, points, img_feats, img_metas, train,
+                         li_fusion_layer):
         """Extract point features."""
         if not self.with_pts_bbox:
             return None
@@ -128,27 +145,26 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x, pts_lidar_feats, pts_aux_feats = self.pts_middle_encoder(
+        x, pts_lidar_feats, pts_aux_feats, img_feats = self.pts_middle_encoder(
             voxel_features,
             feature_coors,
             batch_size,
             img_feats,
             img_metas,
             points,
-            ret_lidar_features=True)
+            ret_lidar_features=True,
+            li_fusion_layer=li_fusion_layer,
+            pos_li_fusion_layer=self.pos_li_fusion_layer)
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)
-        return x, pts_aux_feats, pts_lidar_feats
+        return x, pts_aux_feats, pts_lidar_feats, img_feats
 
     def extract_feat(self, points, img, img_metas, train):
         """Extract features from images and points."""
         img_feats = self.extract_img_feat(img, img_metas)
-        pts_feats, pts_aux_feats, pts_lidar_feats = self.extract_pts_feat(
-            points, img_feats, img_metas, train)
-        if self.use_li_fusion_layer:
-            img_feats = self.pts_li_fusion_layer(img_feats, pts_lidar_feats,
-                                                 img_metas)
+        pts_feats, pts_aux_feats, pts_lidar_feats, img_feats = self.extract_pts_feat(
+            points, img_feats, img_metas, train, self.pts_li_fusion_layer)
 
         if train:
             return img_feats, pts_feats, pts_aux_feats
@@ -211,8 +227,18 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                                      batch_size))
             return spt_list
 
+        def coor2pts(x):
+            ratio = self.pts_middle_encoder.sparse_shape[1] / x.spatial_shape[1]
+            pts = x.indices * torch.tensor(
+                (self.pts_voxel_layer.voxel_size + [1])[::-1]).cuda() * ratio
+            pts[:, 0] = pts[:, 0] / ratio
+            pts[:, 1:] += torch.tensor(
+                self.pts_voxel_layer.point_cloud_range[:3][::-1]).cuda()
+            pts[:, 1:] = pts[:, [3, 2, 1]]
+            return pts[:, 1:]
+
         def pts2img(spt, img_meta, img_shape):
-            pts = self.pts_li_fusion_layer.coor2pts(spt)
+            pts = coor2pts(spt)
             img_scale_factor = (
                 pts.new_tensor(img_meta['scale_factor'][:2])
                 if 'scale_factor' in img_meta.keys() else 1)
@@ -241,86 +267,92 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         batch_size = len(gt_bboxes_3d)
 
         # pts aux loss
-        pts_aux_feat_list = sp2list(pts_aux_feats, batch_size)
-        aux_pts_losses_cls, aux_pts_losses_reg = torch.tensor(
-            0.).cuda(), torch.tensor(0.).cuda()
-        pred_cls_pts_list, pred_cls_img_list = [], []
-        pos_pts_inds_list = []
-        for b, (pts_aux_feats, gt_bbox_3d, gt_label_3d) in enumerate(
-                zip(pts_aux_feat_list, gt_bboxes_3d, gt_labels_3d)):
-            num_gt_bbox = gt_bbox_3d.tensor.shape[0]
-            points = self.pts_li_fusion_layer.coor2pts(pts_aux_feats)
-            gt_cls_pts, gt_reg_pts = get_pts_aux_target(
-                points, gt_bbox_3d, gt_label_3d)
-            pos_inds = gt_cls_pts.nonzero().squeeze()
-            pos_pts_inds_list.append(pos_inds)
-            pred_cls_pts = self.aux_pts_cls(pts_aux_feats.features)
-            pred_cls_pts_list.append(pred_cls_pts)
-            pred_reg_pts = self.aux_pts_reg(pts_aux_feats.features)
-            aux_pts_loss_cls = self.aux_pts_loss_cls(
-                pred_cls_pts,
-                gt_cls_pts.to(torch.long).cuda(),
-                avg_factor=pos_inds.shape[0])
+        if self.use_aux_pts_cls * self.use_aux_pts_reg:
+            pts_aux_feat_list = sp2list(pts_aux_feats, batch_size)
+            aux_pts_losses_cls, aux_pts_losses_reg = torch.tensor(
+                0.).cuda(), torch.tensor(0.).cuda()
+            pred_cls_pts_list, pred_cls_img_list = [], []
+            pos_pts_inds_list = []
+            for b, (pts_aux_feats, gt_bbox_3d, gt_label_3d) in enumerate(
+                    zip(pts_aux_feat_list, gt_bboxes_3d, gt_labels_3d)):
+                num_gt_bbox = gt_bbox_3d.tensor.shape[0]
+                points = coor2pts(pts_aux_feats)
+                gt_cls_pts, gt_reg_pts = get_pts_aux_target(
+                    points, gt_bbox_3d, gt_label_3d)
+                pos_inds = gt_cls_pts.nonzero().squeeze()
+                pos_pts_inds_list.append(pos_inds)
+                pred_cls_pts = self.aux_pts_cls(pts_aux_feats.features)
+                pred_cls_pts_list.append(pred_cls_pts)
+                pred_reg_pts = self.aux_pts_reg(pts_aux_feats.features)
+                aux_pts_loss_cls = self.aux_pts_loss_cls(
+                    pred_cls_pts,
+                    gt_cls_pts.to(torch.long).cuda(),
+                    avg_factor=pos_inds.shape[0])
 
-            aux_pts_loss_reg = self.aux_pts_loss_reg(
-                pred_reg_pts[pos_inds],
-                gt_reg_pts[pos_inds].cuda(),
-                avg_factor=pos_inds.shape[0])
+                aux_pts_loss_reg = self.aux_pts_loss_reg(
+                    pred_reg_pts[pos_inds],
+                    gt_reg_pts[pos_inds].cuda(),
+                    avg_factor=pos_inds.shape[0])
 
-            aux_pts_losses_cls += aux_pts_loss_cls
-            aux_pts_losses_reg += aux_pts_loss_reg
+                aux_pts_losses_cls += aux_pts_loss_cls
+                aux_pts_losses_reg += aux_pts_loss_reg
+            losses.update({
+                'losses_aux_pts_cls': aux_pts_losses_cls,
+                'losses_aux_pts_reg': aux_pts_losses_reg * 0.2
+            })
 
         # img aux loss
-        cat_list = []
-        aux_img_losses_cls = torch.tensor(0.).cuda()
-        for i in range(len(img_aux_feats)):
-            cat_list.append(self.aux_img_cls_agg[i](img_aux_feats[i]))
-        cat_feat = torch.cat(cat_list, dim=1)
-        pred_cls_img = self.aux_img_cls(cat_feat)
-        gt_cls_img = nn.functional.interpolate(
-            img_mask, size=pred_cls_img.shape[2:])
-        pred_cls_img_list = pred_cls_img.permute(0, 2, 3, 1).clone()
-        pred_cls_img = pred_cls_img.permute(0, 2, 3,
-                                            1).reshape(batch_size, -1,
-                                                       self.num_classes)
-        gt_cls_img = gt_cls_img.squeeze().reshape(batch_size, -1)
-        for b in range(batch_size):
-            aux_img_loss_cls = self.aux_img_loss_cls(
-                pred_cls_img[b], gt_cls_img[b].to(torch.long))
-            aux_img_losses_cls += aux_img_loss_cls
+        if self.use_aux_img_cls:
+            cat_list = []
+            aux_img_losses_cls = torch.tensor(0.).cuda()
+            for i in range(len(img_aux_feats)):
+                cat_list.append(self.aux_img_cls_agg[i](img_aux_feats[i]))
+            cat_feat = torch.cat(cat_list, dim=1)
+            pred_cls_img = self.aux_img_cls(cat_feat)
+            gt_cls_img = nn.functional.interpolate(
+                img_mask, size=pred_cls_img.shape[2:])
+            pred_cls_img_list = pred_cls_img.permute(0, 2, 3, 1).clone()
+            pred_cls_img = pred_cls_img.permute(0, 2, 3, 1).reshape(
+                batch_size, -1, self.num_classes)
+            gt_cls_img = gt_cls_img.squeeze().reshape(batch_size, -1)
+            for b in range(batch_size):
+                aux_img_loss_cls = self.aux_img_loss_cls(
+                    pred_cls_img[b], gt_cls_img[b].to(torch.long))
+                aux_img_losses_cls += aux_img_loss_cls
+            losses.update({'losses_aux_img_reg': aux_img_losses_cls})
 
         # consistency loss
-        aux_con_losses_cls = torch.tensor(0.).cuda()
-        for b in range(batch_size):
-            # cls
-            p_pts_cls_pred = pred_cls_pts_list[b]
-            i_img_cls_pred = pred_cls_img_list[b]
-            img_shape = i_img_cls_pred.shape[0:2]
-            proj_pts = pts2img(pts_aux_feat_list[b], img_metas[b], img_shape)
+        if self.use_aux_con_cls:
+            aux_con_losses_cls = torch.tensor(0.).cuda()
+            for b in range(batch_size):
+                # cls
+                p_pts_cls_pred = pred_cls_pts_list[b]
+                i_img_cls_pred = pred_cls_img_list[b]
+                img_shape = i_img_cls_pred.shape[0:2]
+                proj_pts = pts2img(pts_aux_feat_list[b], img_metas[b],
+                                   img_shape)
 
-            fore_thres = 0.2
-            p_img_cls_pred = i_img_cls_pred[proj_pts[:, 0], proj_pts[:, 1]]
-            p_pts_mask = p_pts_cls_pred.max(1)[0] > fore_thres
-            p_img_mask = p_img_cls_pred.max(1)[0] > fore_thres
-            p_mask = torch.logical_or(p_pts_mask, p_img_mask)
+                fore_thres = 0.2
+                p_img_cls_pred = i_img_cls_pred[proj_pts[:, 0], proj_pts[:, 1]]
+                p_pts_mask = p_pts_cls_pred.max(1)[0] > fore_thres
+                p_img_mask = p_img_cls_pred.max(1)[0] > fore_thres
+                p_mask = torch.logical_or(p_pts_mask, p_img_mask)
 
-            pts_cls_pred = p_pts_cls_pred[p_mask]
-            img_cls_pred = p_img_cls_pred[p_mask]
-            if p_mask.nonzero().shape[0] == 0:
-                continue
-            if self.num_classes == 1:
-                aux_con_losses_cls += self.aux_con_loss_cls(pts_cls_pred, img_cls_pred)
-            else:
-                aux_con_losses_cls += self.aux_con_loss_cls(
-                    pts_cls_pred, img_cls_pred)
-                aux_con_losses_cls += self.aux_con_loss_cls(
-                    img_cls_pred, pts_cls_pred)
+                pts_cls_pred = p_pts_cls_pred[p_mask]
+                img_cls_pred = p_img_cls_pred[p_mask]
+                if p_mask.nonzero().shape[0] == 0:
+                    continue
+                if self.num_classes == 1:
+                    aux_con_losses_cls += self.aux_con_loss_cls(
+                        pts_cls_pred, img_cls_pred)
+                else:
+                    aux_con_losses_cls += self.aux_con_loss_cls(
+                        pts_cls_pred, img_cls_pred)
+                    aux_con_losses_cls += self.aux_con_loss_cls(
+                        img_cls_pred, pts_cls_pred)
+            losses.update({'aux_con_losses_cls': aux_con_losses_cls})
 
-        return dict(
-            loss_aux_pts_cls=aux_pts_losses_cls,
-            loss_aux_pts_reg=aux_pts_losses_reg,
-            loss_aux_img_cls=aux_img_losses_cls,
-            loss_aux_con_cls=aux_con_losses_cls)
+        return losses
 
     def input_visualize(self, imgs, gt_bboxes):
         img_norm_cfg = dict(
