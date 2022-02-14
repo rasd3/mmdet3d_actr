@@ -21,6 +21,7 @@ class KittiParallelDataset(KittiDataset):
         super(KittiParallelDataset, self).__init__(**kwargs)
         self.info_file = info_file
         self.mono3d_data_infos = self.mono3d_load_annotations(info_file)
+        self.bbox_code_size = 7
 
     def mono3d_load_annotations(self, ann_file):
         """Load annotation from COCO style annotation file.

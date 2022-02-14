@@ -64,7 +64,10 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         self.aux_pts_loss_cls = build_loss(aux_pts_loss_cls)
         self.aux_pts_loss_reg = build_loss(aux_pts_loss_reg)
         self.aux_img_loss_cls = build_loss(aux_img_loss_cls)
-        self.aux_con_loss_cls = build_loss(aux_con_loss_cls)
+        if self.num_classes == 1:
+            self.aux_con_loss_cls = build_loss(aux_pts_loss_reg)
+        else:
+            self.aux_con_loss_cls = build_loss(aux_con_loss_cls)
         in_channels = self.img_neck.out_channels
         out_channel = 64
         deblocks = []
@@ -305,10 +308,13 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             img_cls_pred = p_img_cls_pred[p_mask]
             if p_mask.nonzero().shape[0] == 0:
                 continue
-            aux_con_losses_cls += self.aux_con_loss_cls(
-                pts_cls_pred, img_cls_pred)
-            aux_con_losses_cls += self.aux_con_loss_cls(
-                img_cls_pred, pts_cls_pred)
+            if self.num_classes == 1:
+                aux_con_losses_cls += self.aux_con_loss_cls(pts_cls_pred, img_cls_pred)
+            else:
+                aux_con_losses_cls += self.aux_con_loss_cls(
+                    pts_cls_pred, img_cls_pred)
+                aux_con_losses_cls += self.aux_con_loss_cls(
+                    img_cls_pred, pts_cls_pred)
 
         return dict(
             loss_aux_pts_cls=aux_pts_losses_cls,

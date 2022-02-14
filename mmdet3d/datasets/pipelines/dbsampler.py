@@ -450,7 +450,7 @@ class DataBaseSampler(object):
         # for gts_mask
         if self.with_img:
             img_mask = np.zeros_like(img)[..., 0]
-            img_mask.fill(3)
+            img_mask.fill(len(self.classes))
             gts_img, gts_coor = [], []
             gt_num = gt_bboxes.shape[0]
             for i in range(gt_num):

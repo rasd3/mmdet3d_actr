@@ -166,7 +166,6 @@ model = dict(
         in_channels=512,
         feat_channels=512,
         use_direction_classifier=True,
-        use_iou_regressor=True,
         anchor_generator=dict(
             type='Anchor3DRangeGenerator',
             ranges=[
@@ -186,7 +185,6 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
-        loss_iou=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
         loss_dir=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)),
     # model training and testing settings
@@ -393,7 +391,7 @@ optimizer = dict(
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 
-evaluation = dict(interval=40, pipeline=eval_pipeline)
+evaluation = dict(interval=2, pipeline=eval_pipeline)
 find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
