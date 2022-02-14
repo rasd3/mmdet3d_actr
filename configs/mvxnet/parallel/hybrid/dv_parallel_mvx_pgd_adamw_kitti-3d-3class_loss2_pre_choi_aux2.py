@@ -23,7 +23,7 @@ model = dict(
         alpha=0.25,
         loss_weight=1.0),
     aux_pts_loss_reg=dict(
-        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0),
+        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=0.2),
     aux_img_loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,

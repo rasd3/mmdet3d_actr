@@ -298,7 +298,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                 aux_pts_losses_reg += aux_pts_loss_reg
             losses.update({
                 'losses_aux_pts_cls': aux_pts_losses_cls,
-                'losses_aux_pts_reg': aux_pts_losses_reg * 0.2
+                'losses_aux_pts_reg': aux_pts_losses_reg
             })
 
         # img aux loss
