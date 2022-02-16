@@ -56,6 +56,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         # build li fusion layer
         self.use_li_fusion_layer = use_li_fusion_layer
         self.pos_li_fusion_layer = pos_li_fusion_layer
+        self.pts_li_fusion_layer = None
         if self.use_li_fusion_layer:
             self.pts_li_fusion_layer = build_fusion_layer(pts_li_fusion_layer)
 
@@ -369,7 +370,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
             for bbox in bboxes:
                 img = cv2.rectangle(img.copy(), (bbox[0], bbox[1]),
                                     (bbox[2], bbox[3]), (0, 0, 255), 3)
-            cv2.imwrite('%06d_ori.png' % IDX, img)
+            cv2.imwrite('./vis/%06d_ori.png' % IDX, img)
             IDX += 1
 
     def forward_train(self,
@@ -391,7 +392,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                       proposals=None,
                       gt_bboxes_ignore=None):
         #  self.input_visualize(img, gt_bboxes)
-        #  self.input_visualize(img, gt_bboxes_cam)
+        #  self.input_visualize(img, gt_bboxes)
 
         img_feats, pts_feats, pts_aux_feats = self.extract_feat(
             points, img=img, img_metas=img_metas, train=True)
@@ -433,7 +434,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                 The outer list corresponds to each image. The inner list
                 corresponds to each class.
         """
-        img_metas[0]['scale_factor'] = torch.tensor([1.0, 1.0, 1.0, 1.0])
+        img_metas[0]['scale_factor'] = torch.tensor([1.0, 1.0, 1.0, 1.0]).cuda()
         outs = self.img_bbox_head(img_feats)
         bbox_outputs = self.img_bbox_head.get_bboxes(
             *outs, img_metas, rescale=rescale)

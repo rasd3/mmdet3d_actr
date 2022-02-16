@@ -8,5 +8,5 @@ model = dict(bbox_head=dict(
     loss_iou=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
 ))
 #  data = dict(samples_per_gpu=12, workers_per_gpu=4)
-data = dict(samples_per_gpu=3, workers_per_gpu=2)
-evaluation = dict(interval=1)
+data = dict(samples_per_gpu=4, workers_per_gpu=2)
+evaluation = dict(interval=40)

@@ -373,7 +373,7 @@ class ObjectSample(object):
                 input_dict['img'] = sampled_dict['img']
 
             if 'gt_bboxes_3d_cam' in input_dict:
-                sampled_gt_bboxes_3d_cam = sampled_dict['gt_bboxes_3d']
+                sampled_gt_bboxes_3d_cam = sampled_dict['gt_bboxes_3d_cam'][:, 0]
                 gt_bboxes_3d_cam = gt_bboxes_3d_cam.new_box(
                     np.concatenate([
                         gt_bboxes_3d_cam.tensor.numpy(),

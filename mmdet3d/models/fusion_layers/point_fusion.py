@@ -15,6 +15,7 @@ from . import apply_3d_transformation
 
 IDX = 0
 
+
 class BasicGate(nn.Module):
     # mod code from 3D-CVF
     def __init__(self, in_channel):
@@ -436,8 +437,9 @@ class ACTR(BaseModule):
         elif self.fusion_method == 'sum':
             fuse_out = pts_feats + enh_feat_cat
         elif self.fusion_method == 'gating_v1':
+            breakpoint()
             gated_fuse_feat = self.trg_gating(
-                (pts_feats + enh_feat_cat).unsqueeze(0).permute(0, 2, 1),
+                (pts_feats).unsqueeze(0).permute(0, 2, 1),
                 enh_feat_cat.unsqueeze(0).permute(0, 2, 1))
             gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
             fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
@@ -453,15 +455,16 @@ class ACTR(BaseModule):
 @FUSION_LAYERS.register_module()
 class IACTR(BaseModule):
 
-    def __init__(self,
-                 actr_cfg,
-                 init_cfg=None,
-                 coord_type='LIDAR',
-                 activate_out=False,
-                 voxel_size=None,
-                 sparse_shape=None,
-                 point_cloud_range=None,
-                 ):
+    def __init__(
+        self,
+        actr_cfg,
+        init_cfg=None,
+        coord_type='LIDAR',
+        activate_out=False,
+        voxel_size=None,
+        sparse_shape=None,
+        point_cloud_range=None,
+    ):
         super(IACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
         self.iactr = build_actr(actr_cfg, model_name='IACTR')
@@ -479,7 +482,6 @@ class IACTR(BaseModule):
         pts_feat = (pts_feat * 255.).astype(np.uint8)
         cv2.imwrite('lidar2img_%d.png' % IDX, pts_feat)
         IDX += 1
-        
 
     def coor2pts(self, x):
         ratio = self.sparse_shape[1] / x.spatial_shape[1]
@@ -492,7 +494,9 @@ class IACTR(BaseModule):
 
     def pts2img(self, coor, pts_feat, shape):
         coor = coor[:, [1, 0]]
-        i_shape = torch.cat([shape + 1, torch.tensor([pts_feat.features.shape[1]]).cuda()])
+        i_shape = torch.cat(
+            [shape + 1,
+             torch.tensor([pts_feat.features.shape[1]]).cuda()])
         i_pts_feat = torch.zeros(tuple(i_shape), device=coor.device)
         i_coor = (coor * shape).to(torch.long)
         i_pts_feat[i_coor[:, 0], i_coor[:, 1]] = pts_feat.features
@@ -516,7 +520,9 @@ class IACTR(BaseModule):
         scale_size = len(pts_feats)
         device = img_feats[0].device
         img_feats = img_feats[:self.iactr.num_backbone_outs]
-        img_shapes = [torch.tensor(f.shape[2:], device=device) for f in img_feats]
+        img_shapes = [
+            torch.tensor(f.shape[2:], device=device) for f in img_feats
+        ]
 
         pts_img_list = []
         for s in range(scale_size):
@@ -526,11 +532,13 @@ class IACTR(BaseModule):
                 img_scale_factor = (
                     img_feats[b].new_tensor(img_meta['scale_factor'][:2])
                     if 'scale_factor' in img_meta.keys() else 1)
-                img_flip = img_meta['flip'] if 'flip' in img_meta.keys() else False
+                img_flip = img_meta['flip'] if 'flip' in img_meta.keys(
+                ) else False
                 img_crop_offset = (
                     img_feats[b].new_tensor(img_meta['img_crop_offset'])
                     if 'img_crop_offset' in img_meta.keys() else 0)
-                proj_mat = get_proj_mat_by_coord_type(img_meta, self.coord_type)
+                proj_mat = get_proj_mat_by_coord_type(img_meta,
+                                                      self.coord_type)
                 pts = self.coor2pts(pts_feats[s])
                 coor_2d = get_2d_coor(
                     img_meta=img_meta,
@@ -555,8 +563,16 @@ class IACTR(BaseModule):
         elif self.fusion_method == 'sum':
             for s in range(scale_size):
                 enh_feat[s] = img_feats[s] + enh_feat[s]
+        elif self.fusion_method == 'gating_v1':
+            for s in range(scale_size):
+                gated_fuse_feat = self.trg_gating(
+                    (img_feats[s]).unsqueeze(0).permute(0, 2, 1),
+                    enh_feat[s].unsqueeze(0).permute(0, 2, 1))
+                gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
+                fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
 
         return enh_feat
+
 
 """
 
