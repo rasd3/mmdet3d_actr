@@ -18,10 +18,14 @@ IDX = 0
 
 class BasicGate(nn.Module):
     # mod code from 3D-CVF
-    def __init__(self, in_channel):
+    def __init__(self, in_channel, convf='Conv1d'):
         super(BasicGate, self).__init__()
         self.in_channel = in_channel
-        self.gating_conv = nn.Conv1d(
+        if convf == 'Conv1d':
+            conv_func = nn.Conv1d
+        if convf == 'Conv2d':
+            conv_func = nn.Conv2d
+        self.gating_conv = conv_func(
             self.in_channel,
             1,
             kernel_size=1,
@@ -372,7 +376,10 @@ class ACTR(BaseModule):
         self.coord_type = coord_type
         self.activate_out = activate_out
         if self.fusion_method == 'gating_v1':
-            self.trg_gating = BasicGate(actr_cfg['query_num_feat'])
+            n_channel = actr_cfg['query_num_feat']
+            self.trg_gating = BasicGate(n_channel)
+            self.trg_channel_reduce = nn.Conv1d(
+                n_channel * 2, n_channel, kernel_size=1, stride=1)
 
     def forward(self, img_feats, pts, pts_feats, img_metas):
         """Forward function.
@@ -437,12 +444,12 @@ class ACTR(BaseModule):
         elif self.fusion_method == 'sum':
             fuse_out = pts_feats + enh_feat_cat
         elif self.fusion_method == 'gating_v1':
-            breakpoint()
-            gated_fuse_feat = self.trg_gating(
-                (pts_feats).unsqueeze(0).permute(0, 2, 1),
-                enh_feat_cat.unsqueeze(0).permute(0, 2, 1))
-            gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
-            fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
+            pts_feats_u = pts_feats.unsqueeze(0).permute(0, 2, 1)
+            enh_feat_cat_u = enh_feat_cat.unsqueeze(0).permute(0, 2, 1)
+            gated_fuse_feat_u = self.trg_gating(pts_feats_u, enh_feat_cat_u)
+            fuse_out = torch.cat((pts_feats_u, gated_fuse_feat_u), dim=1)
+            fuse_out = self.trg_channel_reduce(fuse_out)
+            fuse_out = fuse_out.squeeze().permute(1, 0)
         else:
             NotImplementedError('Invalid ACTR fusion method')
 
@@ -474,7 +481,10 @@ class IACTR(BaseModule):
         self.sparse_shape = sparse_shape
         self.point_cloud_range = point_cloud_range
         if self.fusion_method == 'gating_v1':
-            self.trg_gating = BasicGate(actr_cfg['query_num_feat'])
+            n_channel = actr_cfg['query_num_feat']
+            self.trg_gating = BasicGate(n_channel, convf='Conv2d')
+            self.trg_channel_reduce = nn.Conv2d(
+                n_channel * 2, n_channel, kernel_size=1, stride=1)
 
     def visualize(self, pts_feat):
         global IDX
@@ -565,11 +575,10 @@ class IACTR(BaseModule):
                 enh_feat[s] = img_feats[s] + enh_feat[s]
         elif self.fusion_method == 'gating_v1':
             for s in range(scale_size):
-                gated_fuse_feat = self.trg_gating(
-                    (img_feats[s]).unsqueeze(0).permute(0, 2, 1),
-                    enh_feat[s].unsqueeze(0).permute(0, 2, 1))
-                gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
-                fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
+                gated_fuse_feat = self.trg_gating(img_feats[s], enh_feat[s])
+                fuse_out = torch.cat((img_feats[s], gated_fuse_feat), dim=1)
+                fuse_out = self.trg_channel_reduce(fuse_out)
+                enh_feat[s] = fuse_out
 
         return enh_feat
 
