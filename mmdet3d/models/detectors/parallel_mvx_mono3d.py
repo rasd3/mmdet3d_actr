@@ -10,7 +10,7 @@ from mmdet3d.core.bbox import box_np_ops
 from mmdet3d.core.bbox.structures import get_proj_mat_by_coord_type
 from mmdet3d.utils import kitti_vis
 from mmdet3d.ops.spconv.structure import SparseConvTensor
-from mmdet3d.models.fusion_layers.point_fusion import get_2d_coor
+from mmdet3d.models.fusion_layers.point_fusion import get_2d_coor, BasicGate
 from mmdet.models import DETECTORS
 from mmdet.models.builder import build_head
 from mmdet3d.models.builder import build_fusion_layer, build_loss
@@ -112,6 +112,17 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
                 self.aux_con_loss_cls = build_loss(aux_pts_loss_reg)
             else:
                 self.aux_con_loss_cls = build_loss(aux_con_loss_cls)
+        if self.pts_middle_encoder.ret_img_map:
+            self.pts_pt_gate = BasicGate(512, convf='Conv2d')
+            self.pts_im_gate = BasicGate(512, convf='Conv2d')
+            self.pts_fusion_refine = nn.Sequential(
+                    nn.Conv2d(768, 768, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(768),
+                    nn.ReLU(),
+                    nn.Conv2d(768, 512, kernel_size=1, stride=1, padding=0),
+                    nn.BatchNorm2d(512),
+                    nn.ReLU(),
+                    )
 
     @torch.no_grad()
     @force_fp32()
@@ -146,7 +157,7 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x, pts_lidar_feats, pts_aux_feats, img_feats = self.pts_middle_encoder(
+        x, pts_aux_feats, img_feats, x_img = self.pts_middle_encoder(
             voxel_features,
             feature_coors,
             batch_size,
@@ -159,12 +170,20 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)
-        return x, pts_aux_feats, pts_lidar_feats, img_feats
+        if x_img is not None:
+            x = x[0]
+            x_pts = self.pts_pt_gate(x, x)
+            x_img = self.pts_im_gate(x, x_img)
+            x_fus = torch.cat((x_pts, x_img), dim=1)
+            x_fus = self.pts_fusion_refine(x_fus)
+            x = [x_fus]
+
+        return x, pts_aux_feats, img_feats
 
     def extract_feat(self, points, img, img_metas, train):
         """Extract features from images and points."""
         img_feats = self.extract_img_feat(img, img_metas)
-        pts_feats, pts_aux_feats, pts_lidar_feats, img_feats = self.extract_pts_feat(
+        pts_feats, pts_aux_feats, img_feats = self.extract_pts_feat(
             points, img_feats, img_metas, train, self.pts_li_fusion_layer)
 
         if train:

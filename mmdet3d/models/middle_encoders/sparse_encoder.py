@@ -1,9 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
+import copy
 from mmcv.runner import auto_fp16
 from torch import nn as nn
 
 from mmdet3d.ops import SparseBasicBlock, make_sparse_convmodule
+from mmdet3d.ops.spconv.structure import SparseConvTensor
 from mmdet3d.ops import spconv as spconv
 from ..builder import MIDDLE_ENCODERS
 from .. import builder
@@ -46,7 +48,8 @@ class SparseEncoder(nn.Module):
                  fusion_layer=None,
                  fusion_pos=None,
                  voxel_size=None,
-                 point_cloud_range=None):
+                 point_cloud_range=None,
+                 ret_img_map=False):
         super().__init__()
         assert block_type in ['conv_module', 'basicblock']
         self.sparse_shape = sparse_shape
@@ -62,6 +65,7 @@ class SparseEncoder(nn.Module):
 
         self.fusion_layer = None
         self.fusion_pos = None
+        self.ret_img_map = ret_img_map
         if fusion_layer is not None:
             self.fusion_layer = builder.build_fusion_layer(fusion_layer)
             self.fusion_pos = fusion_pos
@@ -98,6 +102,15 @@ class SparseEncoder(nn.Module):
             block_type=block_type)
 
         self.conv_out = make_sparse_convmodule(
+            encoder_out_channels,
+            self.output_channels,
+            kernel_size=(3, 1, 1),
+            stride=(2, 1, 1),
+            norm_cfg=norm_cfg,
+            padding=0,
+            indice_key='spconv_down2',
+            conv_type='SparseConv3d')
+        self.conv_out_img = make_sparse_convmodule(
             encoder_out_channels,
             self.output_channels,
             kernel_size=(3, 1, 1),
@@ -165,7 +178,13 @@ class SparseEncoder(nn.Module):
                 if li_fusion_layer is not None and pos_li_fusion_layer == 'kim':
                     img_feats = li_fusion_layer(img_feats, lidar_features,
                                                 img_metas)
-                x.features = f_feats
+                if self.ret_img_map:
+                    x_img = SparseConvTensor(x.features, x.indices,
+                                             x.spatial_shape, x.batch_size)
+                    x_img.feature = f_feats
+
+                else:
+                    x.features = f_feats
 
             encode_features.append(x)
 
@@ -177,9 +196,16 @@ class SparseEncoder(nn.Module):
         N, C, D, H, W = spatial_features.shape
         spatial_features = spatial_features.view(N, C * D, H, W)
 
+        spatial_features_img = None
+        if self.ret_img_map:
+            out_img = self.conv_out_img(x_img)
+            spatial_features_img = out_img.dense()
+            N, C, D, H, W = spatial_features_img.shape
+            spatial_features_img = spatial_features_img.view(N, C * D, H, W)
+
         if ret_lidar_features:
-            return (spatial_features, lidar_features, encode_features[-1],
-                    img_feats)
+            return (spatial_features, encode_features[-1], img_feats,
+                    spatial_features_img)
         else:
             return spatial_features, img_feats
 

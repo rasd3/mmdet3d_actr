@@ -11,6 +11,11 @@ model = dict(
     loss_pts_w = 1.,
     loss_img_w = 0.125,
     use_li_fusion_layer=False,
+    pos_li_fusion_layer='choi',
+    use_aux_pts_cls=True,
+    use_aux_pts_reg=True,
+    use_aux_img_cls=False,
+    use_aux_con_cls=False,
     aux_pts_loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,
@@ -18,13 +23,10 @@ model = dict(
         alpha=0.25,
         loss_weight=1.0),
     aux_pts_loss_reg=dict(
-        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0),
+        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=0.2),
     aux_img_loss_cls=dict(
         type='FocalLoss',
-        use_sigmoid=True,
-        gamma=2.0,
-        alpha=0.25,
-        loss_weight=1.0),
+        use_sigmoid=True, gamma=2.0, alpha=0.25, loss_weight=1.0),
     aux_con_loss_cls=dict(
         type='KnowledgeDistillationKLDivLoss', loss_weight=1.0, T=10),
     img_backbone=dict(
@@ -416,4 +418,4 @@ evaluation = dict(interval=2, pipeline=eval_pipeline)
 find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
-load_from = './model_zoo/pgd_r101_caffe_fpn_gn_img_backbone.pth'
+load_from = './model_zoo/pgd_r101_caffe_fpn_gn_for_fin.pth'
