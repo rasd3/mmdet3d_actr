@@ -254,7 +254,8 @@ class IACTR(nn.Module):
                                 v_feat,
                                 q_enh_feats,
                                 q_idxs,
-                                in_zeros=False):
+                                in_zeros=False,
+                                ):
         if in_zeros:
             s_feat = torch.zeros_like(v_feat)
         else:
@@ -271,6 +272,7 @@ class IACTR(nn.Module):
         self,
         i_feats,
         p_feats,
+        ret_pts_img=False,
     ):
         """Parameters:
             v_feat: 3d coord sparse voxel features (B, C, X, Y, Z)
@@ -303,6 +305,9 @@ class IACTR(nn.Module):
             i_srcs.append(i_proj)
             p_srcs.append(p_proj)
             masks.append(mask)
+
+        if ret_pts_img:
+            return p_srcs
 
         q_enh_feats = self.transformer(p_srcs, masks, p_pos, i_srcs, i_pos)
 
