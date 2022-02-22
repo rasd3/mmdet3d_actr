@@ -126,6 +126,25 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
 
     @torch.no_grad()
     @force_fp32()
+    def voxelize_hv(self, points):
+        """Apply hard voxelization to points."""
+        voxels, coors, num_points = [], [], []
+        for res in points:
+            res_voxels, res_coors, res_num_points = self.pts_voxel_layer(res)
+            voxels.append(res_voxels)
+            coors.append(res_coors)
+            num_points.append(res_num_points)
+        voxels = torch.cat(voxels, dim=0)
+        num_points = torch.cat(num_points, dim=0)
+        coors_batch = []
+        for i, coor in enumerate(coors):
+            coor_pad = F.pad(coor, (1, 0), mode='constant', value=i)
+            coors_batch.append(coor_pad)
+        coors_batch = torch.cat(coors_batch, dim=0)
+        return voxels, num_points, coors_batch
+
+    @torch.no_grad()
+    @force_fp32()
     def voxelize(self, points):
         """Apply dynamic voxelization to points.
 
@@ -153,9 +172,14 @@ class ParallelMVXMono3D(DynamicMVXFasterRCNN):
         """Extract point features."""
         if not self.with_pts_bbox:
             return None
-        voxels, coors = self.voxelize(points)
-        voxel_features, feature_coors = self.pts_voxel_encoder(
-            voxels, coors, points, img_feats, img_metas)
+        if type(self.pts_voxel_encoder).__name__ == 'HardSimpleVFE':
+            voxels, num_points, coors = self.voxelize_hv(points)
+            voxel_features = self.pts_voxel_encoder(voxels, num_points, coors)
+            feature_coors = coors
+        else:
+            voxels, coors = self.voxelize(points)
+            voxel_features, feature_coors = self.pts_voxel_encoder(
+                voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
         x, pts_aux_feats, img_feats, x_img = self.pts_middle_encoder(
             voxel_features,
