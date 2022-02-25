@@ -473,11 +473,12 @@ class IACTR(BaseModule):
         voxel_size=None,
         sparse_shape=None,
         point_cloud_range=None,
-        ret_pts_img=False
+        ret_pts_img=False,
+        model_name='IACTR',
     ):
         super(IACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
-        self.iactr = build_actr(actr_cfg, model_name='IACTR')
+        self.iactr = build_actr(actr_cfg, model_name=model_name)
         self.coord_type = coord_type
         self.activate_out = activate_out
         self.voxel_size = voxel_size
@@ -594,26 +595,3 @@ class IACTR(BaseModule):
 
         return enh_feat
 
-
-"""
-
-        if self.fusion_method == 'replace':
-            fuse_out = enh_feat_cat
-        elif self.fusion_method == 'concat':
-            fuse_out = torch.cat((pts_feats, enh_feat_cat), dim=1)
-        elif self.fusion_method == 'sum':
-            fuse_out = pts_feats + enh_feat_cat
-        elif self.fusion_method == 'gating_v1':
-            gated_fuse_feat = self.trg_gating(
-                (pts_feats + enh_feat_cat).unsqueeze(0).permute(0, 2, 1),
-                enh_feat_cat.unsqueeze(0).permute(0, 2, 1))
-            gated_fuse_feat = gated_fuse_feat.squeeze().permute(1, 0)
-            fuse_out = torch.cat((pts_feats, gated_fuse_feat), dim=1)
-        else:
-            NotImplementedError('Invalid ACTR fusion method')
-
-        if self.activate_out:
-            fuse_out = F.relu(fuse_out)
-
-        return fuse_out
-"""

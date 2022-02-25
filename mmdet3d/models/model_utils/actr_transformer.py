@@ -31,7 +31,9 @@ class DeformableTransformerACTR(nn.Module):
                  num_feature_levels=4,
                  enc_n_points=4,
                  two_stage=False,
-                 two_stage_num_proposals=300):
+                 two_stage_num_proposals=300,
+                 model_name='ACTR',
+                 ):
         super().__init__()
 
         self.d_model = d_model
@@ -170,7 +172,9 @@ class DeformableTransformerIACTR(nn.Module):
                  num_feature_levels=4,
                  enc_n_points=4,
                  two_stage=False,
-                 two_stage_num_proposals=300):
+                 two_stage_num_proposals=300,
+                 model_name='IACTR',
+                 ):
         super().__init__()
 
         self.d_model = d_model
@@ -178,6 +182,7 @@ class DeformableTransformerIACTR(nn.Module):
         self.nhead = nhead
         self.two_stage = two_stage
         self.two_stage_num_proposals = two_stage_num_proposals
+        self.model_name = model_name
 
         encoder_layer = DeformableTransformerEncoderLayer(
             self.d_model, self.q_model, dim_feedforward, dropout, activation,
@@ -252,7 +257,7 @@ class DeformableTransformerIACTR(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, q_feats, q_poss):
+    def forward(self, srcs, masks, pos_embeds, q_feats, q_poss, q_ref_coors=None):
         # prepare input for encoder
         batch_size = srcs[0].shape[0]
         src_flatten = []
@@ -298,7 +303,12 @@ class DeformableTransformerIACTR(nn.Module):
             lvl_pos_embed_flatten,
             mask_flatten,
             q_pos=lvl_q_pos_embed_flatten,
-            q_feat=q_feat_flatten)
+            q_feat=q_feat_flatten,
+            q_reference_points=q_ref_coors,
+        )
+        if q_ref_coors is not None:
+            return enh_src
+
         enh_src_list = []
         level_start_index = torch.cat(
             [level_start_index,
@@ -451,7 +461,7 @@ def _get_activation_fn(activation):
 def build_deformable_transformer(args, model_name='ACTR'):
     if model_name == 'ACTR':
         model_class = DeformableTransformerACTR
-    elif model_name == 'IACTR':
+    elif 'IACTR' in model_name:
         model_class = DeformableTransformerIACTR
     return model_class(
         d_model=args.hidden_dim,
@@ -465,4 +475,6 @@ def build_deformable_transformer(args, model_name='ACTR'):
         num_feature_levels=args.num_feature_levels,
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,
-        two_stage_num_proposals=args.num_queries)
+        two_stage_num_proposals=args.num_queries,
+        model_name=model_name
+    )
