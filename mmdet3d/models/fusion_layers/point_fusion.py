@@ -475,10 +475,13 @@ class IACTR(BaseModule):
         point_cloud_range=None,
         ret_pts_img=False,
         model_name='IACTR',
+        make_depth_img=False,
     ):
         super(IACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
         self.iactr = build_actr(actr_cfg, model_name=model_name)
+        self.model_name = model_name
+        self.make_depth_img = make_depth_img
         self.coord_type = coord_type
         self.activate_out = activate_out
         self.voxel_size = voxel_size
@@ -510,7 +513,7 @@ class IACTR(BaseModule):
         pts[:, 1:] = pts[:, [3, 2, 1]]
         return pts[:, 1:]
 
-    def pts2img(self, coor, pts_feat, shape):
+    def pts2img(self, coor, pts_feat, shape, pts, ret_depth=False):
         coor = coor[:, [1, 0]]
         i_shape = torch.cat(
             [shape + 1,
@@ -520,7 +523,14 @@ class IACTR(BaseModule):
         i_pts_feat[i_coor[:, 0], i_coor[:, 1]] = pts_feat.features
         i_pts_feat = i_pts_feat[:-1, :-1].permute(2, 0, 1)
         #  self.viualize(i_pts_feat)
-        return i_pts_feat
+        if ret_depth:
+            i_shape[2] = 3
+            i_depth_feat = torch.zeros(tuple(i_shape), device=coor.device)
+            i_depth_feat[i_coor[:, 0], i_coor[:, 1]] = pts
+            i_depth_feat = i_depth_feat[:-1, :-1].permute(2, 0, 1)
+            return i_pts_feat, i_depth_feat
+
+        return i_pts_feat, None
 
     def forward(self, img_feats, pts_feats, img_metas):
         """Forward function.
@@ -543,8 +553,10 @@ class IACTR(BaseModule):
         ]
 
         pts_img_list = []
+        pts_depth_list = []
         for s in range(scale_size):
             batch_img_list = []
+            batch_depth_list = []
             for b in range(batch_size):
                 img_meta = img_metas[b]
                 img_scale_factor = (
@@ -568,20 +580,36 @@ class IACTR(BaseModule):
                     img_flip=img_flip,
                     img_pad_shape=img_meta['input_shape'][:2],
                     img_shape=img_meta['img_shape'][:2])
-                pt_img = self.pts2img(coor_2d, pts_feats[s], img_shapes[s])
+                pt_img, pt_depth_img = self.pts2img(
+                    coor_2d, pts_feats[s], img_shapes[s], pts,
+                    self.make_depth_img)
                 batch_img_list.append(pt_img.unsqueeze(0))
+                if pt_depth_img is not None:
+                    batch_depth_list.append(pt_depth_img.unsqueeze(0))
             pts_img_list.append(torch.cat(batch_img_list))
+            if len(batch_depth_list):
+                pts_depth_list.append(torch.cat(batch_depth_list))
 
-        enh_feat = self.iactr(
-            i_feats=img_feats,
-            p_feats=pts_img_list,
-            ret_pts_img=self.ret_pts_img
-        )
+        if self.model_name == 'IACTRv3':
+            enh_feat = self.iactr(
+                i_feats=img_feats,
+                p_feats=pts_img_list,
+                p_depths=pts_depth_list,
+                ret_pts_img=self.ret_pts_img)
+        else:
+            enh_feat = self.iactr(
+                i_feats=img_feats,
+                p_feats=pts_img_list,
+                ret_pts_img=self.ret_pts_img)
         if self.fusion_method == 'replace':
             pass
         elif self.fusion_method == 'sum':
             for s in range(scale_size):
                 enh_feat[s] = img_feats[s] + enh_feat[s]
+        elif self.fusion_method == 'sum_coor':
+            for s in range(scale_size):
+                enh_feat[s] = img_feats[s] + enh_feat[s]
+                enh_feat[s] = torch.cat((enh_feat[s], pts_depth_list[s]), dim=1)
         elif self.fusion_method == 'gating_v1':
             for s in range(scale_size):
                 gated_fuse_feat = self.trg_gating(img_feats[s], enh_feat[s])
@@ -592,6 +620,4 @@ class IACTR(BaseModule):
             for s in range(scale_size):
                 enh_feat[s] = torch.cat((img_feats[s], enh_feat[s]), dim=1)
 
-
         return enh_feat
-

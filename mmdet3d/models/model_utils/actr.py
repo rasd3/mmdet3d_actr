@@ -140,12 +140,10 @@ class ACTR(nn.Module):
         q_ref_coors = grid
 
         if self.pos_encode_method == "image_coor":
-            q_pos = self.q_position_embedding(q_feat_flattens,
-                                              q_ref_coors).transpose(1, 2)
+            q_pos = self.q_position_embedding(q_ref_coors).transpose(1, 2)
         elif "depth" in self.pos_encode_method:
             q_depths = lidar_grid[..., 0].clone()
-            q_pos = self.q_position_embedding(q_feat_flattens,
-                                              q_depths).transpose(1, 2)
+            q_pos = self.q_position_embedding(q_depths).transpose(1, 2)
 
         # get image feature with reduced channel
         pos = []
@@ -238,16 +236,6 @@ class IACTR(nn.Module):
         # add
         self.max_num_ne_voxel = max_num_ne_voxel
         self.pos_encode_method = pos_encode_method
-        assert self.pos_encode_method in ["image_coor", "depth", "depth_learn"]
-        if self.pos_encode_method == "image_coor":
-            self.q_position_embedding = PositionEmbeddingSineSparse(
-                num_pos_feats=self.transformer.q_model // 2, normalize=True)
-        elif self.pos_encode_method == "depth":
-            self.q_position_embedding = PositionEmbeddingSineSparseDepth(
-                num_pos_feats=self.transformer.q_model, normalize=True)
-        elif self.pos_encode_method == "depth_learn":
-            self.q_position_embedding = PositionEmbeddingLearnedDepth(
-                num_pos_feats=self.transformer.q_model)
 
         self.i_position_embedding = PositionEmbeddingSine(
             num_pos_feats=hidden_dim // 2, normalize=True)
@@ -342,7 +330,6 @@ class IACTRv2(IACTR):
                 i_feat = i_feat.astype(np.uint8)
                 cv2.imwrite('./vis/ipfeat_%d_%d.png' % (IDX + b, s), i_feat)
         IDX += batch_size
-        breakpoint()
 
     def forward(
         self,
@@ -446,6 +433,154 @@ class IACTRv2(IACTR):
         return i_enh_feats
 
 
+class IACTRv3(IACTR):
+    """This is the Deformable IACTR module that performs cross projection"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.pos_encode_method = kwargs['pos_encode_method']
+        if 'depth' in self.pos_encode_method:
+            self.i_position_embedding = PositionEmbeddingSineSparseDepth(
+                num_pos_feats=self.transformer.q_model, normalize=True)
+        if self.pos_encode_method == 'depth_v2':
+            self.i_position_embedding_ori = PositionEmbeddingSine(
+                num_pos_feats=self.transformer.d_model // 2, normalize=True)
+
+    def visualize(self, i_feats, i_enh_feats, p_feats):
+        global IDX
+        for s in range(len(i_feats)):
+            for b in range(batch_size):
+                i_feat = i_enh_feats[s][b].max(0)[0].detach().cpu().numpy()
+                i_feat = (i_feat - i_feat.min()) / (i_feat.max() -
+                                                    i_feat.min()) * 255.
+                i_feat = i_feat.astype(np.uint8)
+                cv2.imwrite('./vis/ifatv2_%d_%d.png' % (IDX + b, s), i_feat)
+                i_feat = i_feats[s][b].max(0)[0].detach().cpu().numpy()
+                i_feat = (i_feat - i_feat.min()) / (i_feat.max() -
+                                                    i_feat.min()) * 255.
+                i_feat = i_feat.astype(np.uint8)
+                cv2.imwrite('./vis/ifeat_%d_%d.png' % (IDX + b, s), i_feat)
+                i_feat = p_feats[s][b].max(0)[0].detach().cpu().numpy()
+                i_feat = (i_feat - i_feat.min()) / (i_feat.max() -
+                                                    i_feat.min()) * 255.
+                i_feat = i_feat.astype(np.uint8)
+                cv2.imwrite('./vis/ipfeat_%d_%d.png' % (IDX + b, s), i_feat)
+        IDX += batch_size
+
+    def forward(
+        self,
+        i_feats,
+        p_feats,
+        p_depths,
+        ret_pts_img=False,
+    ):
+        """Parameters:
+            v_feat: 3d coord sparse voxel features (B, C, X, Y, Z)
+            grid: image coordinates of each v_features (B, X, Y, Z, 3)
+            i_feats: image features (consist of multi-level)
+            in_zeros: whether scatter to empty voxel or not
+
+        It returns a dict with the following elements:
+           - "srcs_enh": enhanced feature from camera coordinates
+        """
+        batch_size = i_feats[0].shape[0]
+
+        # get image feature with reduced channel
+        p_srcs, p_pos = [], []
+        i_srcs, i_pos = [[] for _ in range(batch_size)
+                         ], [[] for _ in range(batch_size)]
+        i_nz_ns, i_nzs = [[] for _ in range(batch_size)
+                          ], [[] for _ in range(batch_size)]
+        max_ne_voxel = []
+        masks = []
+        for l, (i_src, p_src,
+                p_depth) in enumerate(zip(i_feats, p_feats, p_depths)):
+            i_proj = self.i_input_proj[l](i_src)
+            p_proj = self.p_input_proj[l](p_src)
+            mask = torch.zeros(
+                (i_proj.shape[0], i_proj.shape[2], i_proj.shape[3]),
+                dtype=torch.bool,
+                device=i_src.device,
+            )
+            if self.pos_encode_method == 'depth_v2':
+                pos_i = self.i_position_embedding_ori(
+                    NestedTensor(i_proj, mask)).to(i_proj.dtype)
+            pos_p = self.p_position_embedding(NestedTensor(p_proj, mask)).to(
+                p_proj.dtype)
+
+            max_v = 0
+            for b in range(batch_size):
+                i_nz = torch.nonzero(p_src[b].max(0)[0])
+                max_v = max(max_v, i_nz.shape[0])
+                i_nz_n = i_nz.to(torch.float) / torch.tensor(
+                    p_src[0].shape[1:]).cuda()
+                i_proj_nz = i_proj[b, :, i_nz[:, 0], i_nz[:, 1]]
+
+                # position encoding
+                p_depth_nz = p_depth[b, :, i_nz[:, 0], i_nz[:, 1]]
+                pos_i_nz = self.i_position_embedding(
+                    p_depth_nz[0].unsqueeze(0))[0]
+                if self.pos_encode_method == 'depth_v2':
+                    pos_i_nz_img_coor = pos_i[b, :, i_nz[:, 0], i_nz[:, 1]]
+                    pos_i_nz += pos_i_nz_img_coor
+
+                i_nzs[b].append(i_nz)
+                i_nz_ns[b].append(i_nz_n)
+                i_srcs[b].append(i_proj_nz)
+                i_pos[b].append(pos_i_nz)
+            max_ne_voxel.append(max_v)
+
+            p_pos.append(pos_p)
+            p_srcs.append(p_proj)
+            masks.append(mask)
+
+        i_srcs_t_l, i_nz_ns_t_l, i_pos_t_l = [], [], []
+        for s in range(len(i_feats)):
+            i_nz_ns_t = torch.zeros((batch_size, max_ne_voxel[s], 2),
+                                    device=i_feats[0].device)
+            i_srcs_t = torch.zeros(
+                (batch_size, i_srcs[0][0].shape[0], max_ne_voxel[s]),
+                device=i_feats[0].device)
+            i_pos_t = torch.zeros(
+                (batch_size, i_pos[0][0].shape[0], max_ne_voxel[s]),
+                device=i_feats[0].device)
+            for b in range(batch_size):
+                n_point = i_nz_ns[b][s].shape[0]
+                i_nz_ns_t[b, :n_point] = i_nz_ns[b][s]
+                i_srcs_t[b, :, :n_point] = i_srcs[b][s]
+                i_pos_t[b, :, :n_point] = i_pos[b][s]
+            i_nz_ns_t_l.append(i_nz_ns_t)
+            i_srcs_t_l.append(i_srcs_t)
+            i_pos_t_l.append(i_pos_t)
+
+        i_nz_ns_t_l = torch.cat(i_nz_ns_t_l, dim=1)
+        q_enh_feats = self.transformer(
+            p_srcs,
+            masks,
+            p_pos,
+            i_srcs_t_l,
+            i_pos_t_l,
+            q_ref_coors=i_nz_ns_t_l)
+
+        i_enh_feats = [
+            torch.zeros_like(i_feats[s]) for s in range(len(i_feats))
+        ]
+        ne_cum = torch.tensor([0] + max_ne_voxel).cumsum(0)
+        for b in range(batch_size):
+            for s in range(len(i_feats)):
+                coor = i_nzs[b][s]
+                q_enh_feat = q_enh_feats[b, ne_cum[s]:ne_cum[s] +
+                                         i_nzs[b][s].shape[0]]
+                i_enh_feats[s][b][:, coor[:, 0],
+                                  coor[:, 1]] = q_enh_feat.permute(1, 0)
+
+        if False:
+            self.visualize(i_feats, i_enh_feats, p_feats)
+
+        return i_enh_feats
+
+
 class MLP(nn.Module):
     """Very simple multi-layer perceptron (also called FFN)"""
 
@@ -468,6 +603,12 @@ def build(model_cfg, model_name='ACTR'):
         parents=[get_args_parser()])
     args = parser.parse_args([])
     device = torch.device(args.device)
+    model_dict = {
+        'ACTR': ACTR,
+        'IACTR': IACTR,
+        'IACTRv2': IACTRv2,
+        'IACTRv3': IACTRv3
+    }
 
     # from yaml
     num_channels = model_cfg.num_channels
@@ -478,13 +619,7 @@ def build(model_cfg, model_name='ACTR'):
     args.max_num_ne_voxel = model_cfg.max_num_ne_voxel
     args.num_feature_levels = len(model_cfg.num_channels)
 
-    if model_name == 'ACTR':
-        model_class = ACTR
-    elif model_name == 'IACTR':
-        model_class = IACTR
-    elif model_name == 'IACTRv2':
-        model_class = IACTRv2
-
+    model_class = model_dict[model_name]
     transformer = build_deformable_transformer(args, model_name=model_name)
 
     model = model_class(

@@ -339,6 +339,7 @@ class KittiDataset(Custom3DDataset):
         from mmdet3d.core.evaluation import kitti_eval
         gt_annos = [info['annos'] for info in self.data_infos]
 
+        ap_result_strs = []
         if isinstance(result_files, dict):
             ap_dict = dict()
             for name, result_files_ in result_files.items():
@@ -354,6 +355,7 @@ class KittiDataset(Custom3DDataset):
 
                 print_log(f'Results of {name}:\n' + ap_result_str,
                           logger=logger)
+                ap_result_strs.append(ap_result_str)
 
         else:
             if metric == 'img_bbox':
@@ -370,7 +372,7 @@ class KittiDataset(Custom3DDataset):
             tmp_dir.cleanup()
         if show:
             self.show(results, out_dir, pipeline=pipeline)
-        return ap_dict
+        return ap_dict, ap_result_strs
 
     def bbox2result_kitti(self,
                           net_outputs,

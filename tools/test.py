@@ -210,7 +210,14 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
-            print(dataset.evaluate(outputs, **eval_kwargs))
+            ap_dict, ap_result_strs = dataset.evaluate(outputs, **eval_kwargs)
+            print(ap_dict)
+
+            pth_filename = os.path.basename(args.checkpoint)
+            pth_dir = os.path.dirname(args.checkpoint)
+            with open(pth_dir + '/result_%s.txt' % pth_filename[:-4], "w") as f:
+                for ap_result_str in ap_result_strs:
+                    f.write(ap_result_str + '\n')
 
 
 if __name__ == '__main__':
