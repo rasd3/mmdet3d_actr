@@ -296,7 +296,7 @@ class IACTR(nn.Module):
             i_pos.append(pos_i)
             p_pos.append(pos_p)
             i_srcs.append(i_proj)
-            p_srcs.append(p_proj)
+            p_srcs.append(p_proj + i_proj)
             masks.append(mask)
 
         if ret_pts_img:
@@ -532,7 +532,7 @@ class IACTRv3(IACTR):
             max_ne_voxel.append(max_v)
 
             p_pos.append(pos_p)
-            p_srcs.append(p_proj)
+            p_srcs.append(p_proj + i_proj)
             masks.append(mask)
 
         i_srcs_t_l, i_nz_ns_t_l, i_pos_t_l = [], [], []
