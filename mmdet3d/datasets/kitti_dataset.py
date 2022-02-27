@@ -373,7 +373,7 @@ class KittiDataset(Custom3DDataset):
         if show:
             self.show(results, out_dir, pipeline=pipeline)
 
-        ap_dict['ap_result_strs'] = ap_result_strs
+        #  ap_dict['ap_result_strs'] = ap_result_strs
             
         return ap_dict
 
