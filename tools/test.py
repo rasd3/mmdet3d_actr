@@ -210,8 +210,9 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
-            ap_dict, ap_result_strs = dataset.evaluate(outputs, **eval_kwargs)
+            ap_dict = dataset.evaluate(outputs, **eval_kwargs)
             print(ap_dict)
+            ap_result_strs = ap_dict['ap_result_strs']
 
             pth_filename = os.path.basename(args.checkpoint)
             pth_dir = os.path.dirname(args.checkpoint)

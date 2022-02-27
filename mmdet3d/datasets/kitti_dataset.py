@@ -372,7 +372,10 @@ class KittiDataset(Custom3DDataset):
             tmp_dir.cleanup()
         if show:
             self.show(results, out_dir, pipeline=pipeline)
-        return ap_dict, ap_result_strs
+
+        ap_dict['ap_result_strs'] = ap_result_strs
+            
+        return ap_dict
 
     def bbox2result_kitti(self,
                           net_outputs,
