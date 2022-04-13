@@ -10,6 +10,7 @@ from torch.nn import functional as F
 from mmdet3d.core.bbox.structures import (get_proj_mat_by_coord_type,
                                           points_cam2img)
 from mmdet3d.models.model_utils.actr import build as build_actr
+from mmdet3d.models.model_utils.pointformer import LocalTransformer, LocalGlobalTransformer
 from ..builder import FUSION_LAYERS
 from . import apply_3d_transformation
 
@@ -369,10 +370,12 @@ class ACTR(BaseModule):
                  actr_cfg,
                  init_cfg=None,
                  coord_type='LIDAR',
-                 activate_out=False):
+                 activate_out=False,
+                 model_name='ACTR',
+                 lt_cfg=None):
         super(ACTR, self).__init__(init_cfg=init_cfg)
         self.fusion_method = actr_cfg['fusion_method']
-        self.actr = build_actr(actr_cfg)
+        self.actr = build_actr(actr_cfg, model_name=model_name, lt_cfg=lt_cfg)
         self.coord_type = coord_type
         self.activate_out = activate_out
         if self.fusion_method == 'gating_v1':
@@ -380,6 +383,11 @@ class ACTR(BaseModule):
             self.trg_gating = BasicGate(n_channel)
             self.trg_channel_reduce = nn.Conv1d(
                 n_channel * 2, n_channel, kernel_size=1, stride=1)
+        if False:
+            self.lt = LocalTransformer(2048, 2.0, 32, 64, 64, 4, 2,
+                                       dict(type='BN2d'), 1, 0.0)
+            self.lgt = LocalGlobalTransformer(64, 64, 4, 2, dict(type='BN2d'), 1,
+                                              2048, 0.2, True)
 
     def forward(self, img_feats, pts, pts_feats, img_metas):
         """Forward function.
@@ -393,6 +401,13 @@ class ACTR(BaseModule):
         Returns:
             torch.Tensor: Fused features of each point.
         """
+        if False:
+            np = pts[0].shape[0]
+            xyz, features = pts[0].unsqueeze(0), pts_feats[:np].unsqueeze(
+                0).transpose(2, 1)
+            breakpoint()
+            enh_feats = self.lt(xyz, features)
+
         batch_size = len(pts)
         img_feats = img_feats[:self.actr.num_backbone_outs]
         num_points = [i.shape[0] for i in pts]
@@ -580,9 +595,9 @@ class IACTR(BaseModule):
                     img_flip=img_flip,
                     img_pad_shape=img_meta['input_shape'][:2],
                     img_shape=img_meta['img_shape'][:2])
-                pt_img, pt_depth_img = self.pts2img(
-                    coor_2d, pts_feats[s], img_shapes[s], pts,
-                    self.make_depth_img)
+                pt_img, pt_depth_img = self.pts2img(coor_2d, pts_feats[s],
+                                                    img_shapes[s], pts,
+                                                    self.make_depth_img)
                 batch_img_list.append(pt_img.unsqueeze(0))
                 if pt_depth_img is not None:
                     batch_depth_list.append(pt_depth_img.unsqueeze(0))
@@ -609,7 +624,8 @@ class IACTR(BaseModule):
         elif self.fusion_method == 'sum_coor':
             for s in range(scale_size):
                 enh_feat[s] = img_feats[s] + enh_feat[s]
-                enh_feat[s] = torch.cat((enh_feat[s], pts_depth_list[s]), dim=1)
+                enh_feat[s] = torch.cat((enh_feat[s], pts_depth_list[s]),
+                                        dim=1)
         elif self.fusion_method == 'gating_v1':
             for s in range(scale_size):
                 gated_fuse_feat = self.trg_gating(img_feats[s], enh_feat[s])

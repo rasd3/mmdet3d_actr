@@ -210,15 +210,19 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
-            ap_dict = dataset.evaluate(outputs, **eval_kwargs)
+            ap_dict = dataset.evaluate(
+                outputs, return_result_str=True, **eval_kwargs)
             print(ap_dict)
-            ap_result_strs = ap_dict['ap_result_strs']
+            if 'ap_result_strs' in ap_dict:
+                print('print ap_result in checkpoint directory')
+                ap_result_strs = ap_dict['ap_result_strs']
 
-            pth_filename = os.path.basename(args.checkpoint)
-            pth_dir = os.path.dirname(args.checkpoint)
-            with open(pth_dir + '/result_%s.txt' % pth_filename[:-4], "w") as f:
-                for ap_result_str in ap_result_strs:
-                    f.write(ap_result_str + '\n')
+                pth_filename = os.path.basename(args.checkpoint)
+                pth_dir = os.path.dirname(args.checkpoint)
+                with open(pth_dir + '/result_%s.txt' % pth_filename[:-4],
+                          "w") as f:
+                    for ap_result_str in ap_result_strs:
+                        f.write(ap_result_str + '\n')
 
 
 if __name__ == '__main__':

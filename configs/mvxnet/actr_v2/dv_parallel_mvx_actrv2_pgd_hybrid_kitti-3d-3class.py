@@ -1,5 +1,5 @@
 _base_ = [
-    '../../_base_/schedules/cyclic_40e.py', '../../_base_/default_runtime.py'
+    '../../_base_/schedules/cosine.py', '../../_base_/default_runtime.py'
 ]
 
 # model settings
@@ -7,13 +7,37 @@ voxel_size = [0.05, 0.05, 0.1]
 point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 
 model = dict(
-    type='MVXTwoStageDetector',
+    type='ParallelMVXMono3D',
+    loss_pts_w = 1.,
+    loss_img_w = 0.125,
+    use_li_fusion_layer=True,
+    pos_li_fusion_layer='choi',
+    use_aux_pts_cls=True,
+    use_aux_pts_reg=True,
+    use_aux_img_cls=True,
+    use_aux_con_cls=True,
+    aux_pts_loss_cls=dict(
+        type='FocalLoss',
+        use_sigmoid=True,
+        gamma=2.0,
+        alpha=0.25,
+        loss_weight=1.0),
+    aux_pts_loss_reg=dict(
+        type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=0.2),
+    aux_img_loss_cls=dict(
+        type='FocalLoss',
+        use_sigmoid=True,
+        gamma=2.0,
+        alpha=0.25,
+        loss_weight=1.0),
+    aux_con_loss_cls=dict(
+        type='KnowledgeDistillationKLDivLoss', loss_weight=1.0, T=10),
     img_backbone=dict(
         type='ResNet',
-        depth=50,
+        depth=101,
         num_stages=4,
         out_indices=(0, 1, 2, 3),
-        frozen_stages=1,
+        frozen_stages=0,
         norm_cfg=dict(type='BN', requires_grad=False),
         norm_eval=True,
         style='caffe'),
@@ -21,17 +45,101 @@ model = dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
         out_channels=256,
-        num_outs=5),
+        start_level=0,
+        add_extra_convs='on_output',
+        num_outs=4,
+        relu_before_extra_convs=True),
+    img_bbox_head=dict(
+        type='PGDHead',
+        num_classes=3,
+        in_channels=256,
+        stacked_convs=2,
+        feat_channels=256,
+        use_direction_classifier=True,
+        diff_rad_by_sin=True,
+        pred_attrs=False,
+        pred_velo=False,
+        pred_bbox2d=True,
+        pred_keypoints=True,
+        dir_offset=0.7854,
+        strides=(4, 8, 16, 32),
+        group_reg_dims=(2, 1, 3, 1, 16, 4),
+        cls_branch=(256, ),
+        reg_branch=((256, ), (256, ), (256, ), (256, ), (256, ), (256, )),
+        dir_branch=(256, ),
+        attr_branch=(256, ),
+        loss_cls=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=1.0),
+        loss_bbox=dict(
+            type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0),
+        loss_dir=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+        loss_attr=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+        loss_centerness=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        norm_on_bbox=True,
+        centerness_on_reg=True,
+        center_sampling=True,
+        conv_bias=True,
+        dcn_on_last_conv=True,
+        use_depth_classifier=True,
+        depth_branch=(256, ),
+        depth_range=(0, 70),
+        depth_unit=10,
+        division='uniform',
+        depth_bins=8,
+        bbox_coder=dict(
+            type='PGDBBoxCoder',
+            code_size=7,
+            base_depths=((28.01, 16.32), ),
+            base_dims=((0.8, 1.73, 0.6), (1.76, 1.73, 0.6), (3.9, 1.56, 1.6))),
+        bbox_code_size=7,
+        use_onlyreg_proj=True,
+        regress_ranges=((-1, 64), (64, 128), (128, 256), (256, 100000000.0)),
+        centerness_branch=(256, ),
+        weight_dim=1,
+        loss_depth=dict(
+            type='UncertainSmoothL1Loss', alpha=1.0, beta=3.0,
+            loss_weight=1.0)),
+    pts_li_fusion_layer=dict(
+        type='IACTR',
+        voxel_size=voxel_size,
+        sparse_shape=[41, 1600, 1408],
+        point_cloud_range=point_cloud_range,
+        ret_pts_img=True,
+        actr_cfg=dict(
+            fusion_method='sum',
+            num_bins=80,
+            num_channels=[256, 256, 256, 256],
+            p_num_channels=[16, 32, 64, 64],
+            query_num_feat=256,
+            num_enc_layers=4,
+            max_num_ne_voxel=16000,
+            pos_encode_method='depth')),
     pts_voxel_layer=dict(
-        max_num_points=5,
+        max_num_points=-1,
         point_cloud_range=point_cloud_range,
         voxel_size=voxel_size,
-        max_voxels=(16000, 40000),
+        max_voxels=(-1, -1),
     ),
-    pts_voxel_encoder=dict(type='HardSimpleVFE'),
+    pts_voxel_encoder=dict(
+        type='DynamicVFE',
+        in_channels=4,
+        feat_channels=[64, 64],
+        with_distance=False,
+        voxel_size=voxel_size,
+        with_cluster_center=True,
+        with_voxel_center=True,
+        point_cloud_range=point_cloud_range,
+    ),
     pts_middle_encoder=dict(
         type='SparseEncoder',
-        in_channels=4,
+        in_channels=64,
         sparse_shape=[41, 1600, 1408],
         order=('conv', 'norm', 'act'),
         fusion_pos=[3],
@@ -39,15 +147,21 @@ model = dict(
         point_cloud_range=point_cloud_range,
         fusion_layer=dict(
             type='ACTR',
+            model_name='ACTRv2',
+            lt_cfg=dict(
+                npoint=2048,
+                radius=2.0,
+                nsample=32,
+                num_layers=2,
+            ),
             actr_cfg=dict(
-                fusion_method='gating_v1',
+                fusion_method='sum',
                 num_bins=80,
-                num_channels=[256, 256, 256, 256, 256],
+                num_channels=[256, 256, 256, 256],
                 query_num_feat=64,
                 num_enc_layers=4,
                 max_num_ne_voxel=36000,
-                pos_encode_method='depth'))
-    ),
+                pos_encode_method='depth'))),
     pts_backbone=dict(
         type='SECOND',
         in_channels=256,
@@ -116,7 +230,17 @@ model = dict(
             ],
             allowed_border=0,
             pos_weight=-1,
-            debug=False)),
+            debug=False),
+        img=dict(
+            allowed_border=0,
+            code_weight=[
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2,
+                0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1.0,
+                1.0, 1.0, 1.0
+            ],
+            pos_weight=-1,
+            debug=False),
+    ),
     test_cfg=dict(
         pts=dict(
             use_rotate_nms=True,
@@ -125,10 +249,18 @@ model = dict(
             score_thr=0.1,
             min_bbox_size=0,
             nms_pre=100,
-            max_num=50)))
+            max_num=50),
+        img=dict(
+            use_rotate_nms=True,
+            nms_across_levels=False,
+            nms_pre=100,
+            nms_thr=0.05,
+            score_thr=0.001,
+            min_bbox_size=0,
+            max_per_img=20)))
 
 # dataset settings
-dataset_type = 'KittiDataset'
+dataset_type = 'KittiParallelDataset'
 data_root = 'data/kitti/'
 class_names = ['Pedestrian', 'Cyclist', 'Car']
 img_norm_cfg = dict(
@@ -147,20 +279,23 @@ db_sampler = dict(
     sample_groups=dict(Car=10, Pedestrian=3, Cyclist=3))
 train_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
-    dict(type='LoadImageFromFile'),
+    dict(type='LoadImageFromFileMono3D'),
     dict(
         type='LoadAnnotations3D',
-        with_bbox_3d=True,
-        with_label_3d=True,
         with_bbox=True,
         with_label=True,
-        with_img_gt=True),
-    dict(type='ObjectSample', db_sampler=db_sampler, sample_2d=True),
+        with_attr_label=False,
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_img_gt=True,
+        with_bbox_depth=True,
+    ),
     dict(
-        type='Resize',
-        img_scale=[(640, 192), (2560, 768)],
-        multiscale_mode='range',
-        keep_ratio=True),
+        type='ObjectSample',
+        db_sampler=db_sampler,
+        sample_2d=True,
+        sample_2dmask=True),
+    dict(type='Resize', img_scale=(1242, 375), keep_ratio=True),
     dict(
         type='GlobalRotScaleTrans',
         rot_range=[-0.78539816, 0.78539816],
@@ -170,30 +305,40 @@ train_pipeline = [
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='PointShuffle'),
-    dict(type='Normalize', **img_norm_cfg),
+    dict(type='Normalize3D', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
+    dict(
+        type='AuxPointLabeler',
+        use_foreground_pts=True,
+        use_center_pts=True,
+        use_foreground_img=False,
+        use_center_img=False),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(
         type='Collect3D',
-        keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d']),
+        keys=[
+            'points', 'img', 'img_mask', 'gt_bboxes_3d', 'gt_bboxes_3d_cam',
+            'gt_labels_3d', 'gt_labels', 'gt_bboxes', 'gt_bboxes_cam',
+            'centers2d', 'depths'
+        ]),
 ]
 test_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
-    dict(type='LoadImageFromFile'),
+    dict(type='LoadImageFromFileMono3D'),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1280, 384),
         pts_scale_ratio=1,
         flip=False,
         transforms=[
-            dict(type='Resize', multiscale_mode='value', keep_ratio=True),
+            #  dict(type='Resize', multiscale_mode='value', keep_ratio=True),
             dict(
                 type='GlobalRotScaleTrans',
                 rot_range=[0, 0],
                 scale_ratio_range=[1., 1.],
                 translation_std=[0, 0, 0]),
             dict(type='RandomFlip3D'),
-            dict(type='Normalize', **img_norm_cfg),
+            dict(type='Normalize3D', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(
                 type='PointsRangeFilter', point_cloud_range=point_cloud_range),
@@ -208,7 +353,7 @@ test_pipeline = [
 # please keep its loading function consistent with test_pipeline (e.g. client)
 eval_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
-    dict(type='LoadImageFromFile'),
+    dict(type='LoadImageFromFileMono3D'),
     dict(
         type='DefaultFormatBundle3D',
         class_names=class_names,
@@ -217,8 +362,8 @@ eval_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=4,
-    workers_per_gpu=4,
+    samples_per_gpu=2,
+    workers_per_gpu=3,
     train=dict(
         type='RepeatDataset',
         times=2,
@@ -226,6 +371,7 @@ data = dict(
             type=dataset_type,
             data_root=data_root,
             ann_file=data_root + 'kitti_infos_train.pkl',
+            info_file=data_root + 'kitti_infos_train_mono3d.coco.json',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
@@ -237,6 +383,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        info_file=data_root + 'kitti_infos_val_mono3d.coco.json',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -248,6 +395,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        info_file=data_root + 'kitti_infos_val_mono3d.coco.json',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -256,8 +404,29 @@ data = dict(
         test_mode=True,
         box_type_3d='LiDAR'))
 
+# Training settings
+optimizer = dict(
+    _delete_=True,
+    constructor='HybridOptimizerConstructor',
+    pts=dict(
+        type='AdamW',
+        lr=0.003,
+        betas=(0.95, 0.99),
+        weight_decay=0.01,
+        step_interval=1),
+    img=dict(
+        type='SGD',
+        lr=0.001,
+        momentum=0.9,
+        weight_decay=0.0001,
+        ),
+    paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.)
+)
+# max_norm=10 is better for SECOND
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+
 evaluation = dict(interval=2, pipeline=eval_pipeline)
 find_unused_parameters = True
 
 # You may need to download the model first is the network is unstable
-load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
+load_from = './model_zoo/pgd_r101_caffe_fpn_gn_for_fin.pth'

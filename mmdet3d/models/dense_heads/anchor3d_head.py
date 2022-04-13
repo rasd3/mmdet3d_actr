@@ -42,37 +42,36 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         loss_dir (dict): Config of direction classifier loss.
     """
 
-    def __init__(self,
-                 num_classes,
-                 in_channels,
-                 train_cfg,
-                 test_cfg,
-                 feat_channels=256,
-                 use_direction_classifier=True,
-                 use_iou_regressor=False,
-                 anchor_generator=dict(
-                     type='Anchor3DRangeGenerator',
-                     range=[0, -39.68, -1.78, 69.12, 39.68, -1.78],
-                     strides=[2],
-                     sizes=[[1.6, 3.9, 1.56]],
-                     rotations=[0, 1.57],
-                     custom_values=[],
-                     reshape_out=False),
-                 assigner_per_size=False,
-                 assign_per_class=False,
-                 diff_rad_by_sin=True,
-                 dir_offset=0,
-                 dir_limit_offset=1,
-                 bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),
-                 loss_cls=dict(
-                     type='CrossEntropyLoss',
-                     use_sigmoid=True,
-                     loss_weight=1.0),
-                 loss_bbox=dict(
-                     type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
-                 loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2),
-                 loss_iou=None,
-                 init_cfg=None):
+    def __init__(
+        self,
+        num_classes,
+        in_channels,
+        train_cfg,
+        test_cfg,
+        feat_channels=256,
+        use_direction_classifier=True,
+        anchor_generator=dict(
+            type='Anchor3DRangeGenerator',
+            range=[0, -39.68, -1.78, 69.12, 39.68, -1.78],
+            strides=[2],
+            sizes=[[1.6, 3.9, 1.56]],
+            rotations=[0, 1.57],
+            custom_values=[],
+            reshape_out=False),
+        assigner_per_size=False,
+        assign_per_class=False,
+        diff_rad_by_sin=True,
+        dir_offset=0,
+        dir_limit_offset=1,
+        bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),
+        loss_cls=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
+        loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2),
+        loss_iou=None,
+        init_cfg=None,
+        use_iou_regressor=False,
+    ):
         super().__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -169,7 +168,10 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         if self.use_iou_regressor:
             iou_reg_preds = self.conv_iou_reg(x)
 
-        return cls_score, bbox_pred, dir_cls_preds, iou_reg_preds
+        if iou_reg_preds is not None:
+            return cls_score, bbox_pred, dir_cls_preds, iou_reg_preds
+        else:
+            return cls_score, bbox_pred, dir_cls_preds
 
     def forward(self, feats):
         """Forward pass.
@@ -204,9 +206,19 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         anchor_list = [multi_level_anchors for _ in range(num_imgs)]
         return anchor_list
 
-    def loss_single(self, cls_score, bbox_pred, dir_cls_preds, iou_reg_preds,
-                    labels, label_weights, bbox_targets, bbox_weights,
-                    dir_targets, dir_weights, num_total_samples, anchor_list):
+    def loss_single(self,
+                    cls_score,
+                    bbox_pred,
+                    dir_cls_preds,
+                    labels,
+                    label_weights,
+                    bbox_targets,
+                    bbox_weights,
+                    dir_targets,
+                    dir_weights,
+                    num_total_samples,
+                    anchor_list,
+                    iou_reg_preds=None):
         """Calculate loss of Single-level results.
 
         Args:
@@ -266,7 +278,8 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         if self.use_iou_regressor:
             if len(anchor_list[0].shape) > 2:
                 for i in range(len(anchor_list)):
-                    anchor_list[i] = anchor_list[i].reshape(-1, self.box_code_size)
+                    anchor_list[i] = anchor_list[i].reshape(
+                        -1, self.box_code_size)
 
             anchor_list = torch.cat(anchor_list)
             pos_anchor = anchor_list[pos_inds]
@@ -353,15 +366,17 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
         return boxes1, boxes2
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'dir_cls_preds'))
-    def loss(self,
-             cls_scores,
-             bbox_preds,
-             dir_cls_preds,
-             iou_reg_preds,
-             gt_bboxes,
-             gt_labels,
-             input_metas,
-             gt_bboxes_ignore=None):
+    def loss(
+        self,
+        cls_scores,
+        bbox_preds,
+        dir_cls_preds,
+        gt_bboxes,
+        gt_labels,
+        input_metas,
+        gt_bboxes_ignore=None,
+        iou_reg_preds=None,
+    ):
         """Calculate losses.
 
         Args:
@@ -415,13 +430,13 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
             cls_scores,
             bbox_preds,
             dir_cls_preds,
-            iou_reg_preds,
             labels_list,
             label_weights_list,
             bbox_targets_list,
             bbox_weights_list,
             dir_targets_list,
             dir_weights_list,
+            iou_reg_preds=iou_reg_preds,
             num_total_samples=num_total_samples,
             anchor_list=anchor_list,
         )
@@ -437,14 +452,16 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
                 loss_bbox=losses_bbox,
                 loss_dir=losses_dir)
 
-    def get_bboxes(self,
-                   cls_scores,
-                   bbox_preds,
-                   dir_cls_preds,
-                   iou_reg_preds,
-                   input_metas,
-                   cfg=None,
-                   rescale=False):
+    def get_bboxes(
+        self,
+        cls_scores,
+        bbox_preds,
+        dir_cls_preds,
+        input_metas,
+        cfg=None,
+        rescale=False,
+        iou_reg_preds=None,
+    ):
         """Get bboxes of anchor ead.
 
         Args:

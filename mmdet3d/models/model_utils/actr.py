@@ -163,7 +163,7 @@ class ACTR(nn.Module):
             masks.append(mask)
 
         q_enh_feats = self.transformer(srcs, masks, pos, q_feat_flattens,
-                                       q_pos, q_ref_coors)
+                                       q_pos, q_ref_coors, q_lidar_grid=lidar_grid)
 
         return q_enh_feats
 
@@ -597,7 +597,7 @@ class MLP(nn.Module):
         return x
 
 
-def build(model_cfg, model_name='ACTR'):
+def build(model_cfg, model_name='ACTR', lt_cfg=None):
     parser = argparse.ArgumentParser(
         "Deformable DETR training and evaluation script",
         parents=[get_args_parser()])
@@ -605,6 +605,7 @@ def build(model_cfg, model_name='ACTR'):
     device = torch.device(args.device)
     model_dict = {
         'ACTR': ACTR,
+        'ACTRv2': ACTR,
         'IACTR': IACTR,
         'IACTRv2': IACTRv2,
         'IACTRv3': IACTRv3
@@ -620,7 +621,7 @@ def build(model_cfg, model_name='ACTR'):
     args.num_feature_levels = len(model_cfg.num_channels)
 
     model_class = model_dict[model_name]
-    transformer = build_deformable_transformer(args, model_name=model_name)
+    transformer = build_deformable_transformer(args, model_name=model_name, lt_cfg=lt_cfg)
 
     model = model_class(
         transformer,

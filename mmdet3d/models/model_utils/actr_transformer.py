@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.init import constant_, normal_, uniform_, xavier_uniform_
+from mmdet3d.models.model_utils.pointformer import LocalTransformer
 
 from .ops.modules import MSDeformAttn
 from .actr_utils import inverse_sigmoid
@@ -19,21 +20,23 @@ from .actr_utils import inverse_sigmoid
 
 class DeformableTransformerACTR(nn.Module):
 
-    def __init__(self,
-                 d_model=256,
-                 query_num_feat=256,
-                 nhead=8,
-                 num_encoder_layers=6,
-                 dim_feedforward=1024,
-                 dropout=0.1,
-                 activation="relu",
-                 return_intermediate_dec=False,
-                 num_feature_levels=4,
-                 enc_n_points=4,
-                 two_stage=False,
-                 two_stage_num_proposals=300,
-                 model_name='ACTR',
-                 ):
+    def __init__(
+        self,
+        d_model=256,
+        query_num_feat=256,
+        nhead=8,
+        num_encoder_layers=6,
+        dim_feedforward=1024,
+        dropout=0.1,
+        activation="relu",
+        return_intermediate_dec=False,
+        num_feature_levels=4,
+        enc_n_points=4,
+        two_stage=False,
+        two_stage_num_proposals=300,
+        model_name='ACTR',
+        lt_cfg=None,
+    ):
         super().__init__()
 
         self.d_model = d_model
@@ -45,8 +48,11 @@ class DeformableTransformerACTR(nn.Module):
         encoder_layer = DeformableTransformerEncoderLayer(
             self.d_model, self.q_model, dim_feedforward, dropout, activation,
             num_feature_levels, nhead, enc_n_points)
-        self.encoder = DeformableTransformerEncoder(encoder_layer,
-                                                    num_encoder_layers)
+        self.encoder = DeformableTransformerEncoder(
+            encoder_layer,
+            num_encoder_layers,
+            model_name=model_name,
+            lt_cfg=lt_cfg)
 
         self.level_embed = nn.Parameter(
             torch.Tensor(num_feature_levels, d_model))
@@ -115,8 +121,14 @@ class DeformableTransformerACTR(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, q_feat_flatten, q_pos,
-                q_ref_coors):
+    def forward(self,
+                srcs,
+                masks,
+                pos_embeds,
+                q_feat_flatten,
+                q_pos,
+                q_ref_coors,
+                q_lidar_grid=None):
         # prepare input for encoder
         src_flatten = []
         mask_flatten = []
@@ -153,28 +165,31 @@ class DeformableTransformerACTR(nn.Module):
             mask_flatten,
             q_pos=q_pos,
             q_feat=q_feat_flatten,
-            q_reference_points=q_ref_coors)
+            q_reference_points=q_ref_coors,
+            q_lidar_grid=q_lidar_grid)
 
         return memory
 
 
 class DeformableTransformerIACTR(nn.Module):
 
-    def __init__(self,
-                 d_model=256,
-                 query_num_feat=256,
-                 nhead=8,
-                 num_encoder_layers=6,
-                 dim_feedforward=1024,
-                 dropout=0.1,
-                 activation="relu",
-                 return_intermediate_dec=False,
-                 num_feature_levels=4,
-                 enc_n_points=4,
-                 two_stage=False,
-                 two_stage_num_proposals=300,
-                 model_name='IACTR',
-                 ):
+    def __init__(
+        self,
+        d_model=256,
+        query_num_feat=256,
+        nhead=8,
+        num_encoder_layers=6,
+        dim_feedforward=1024,
+        dropout=0.1,
+        activation="relu",
+        return_intermediate_dec=False,
+        num_feature_levels=4,
+        enc_n_points=4,
+        two_stage=False,
+        two_stage_num_proposals=300,
+        model_name='IACTR',
+        lt_cfg=None,
+    ):
         super().__init__()
 
         self.d_model = d_model
@@ -257,7 +272,13 @@ class DeformableTransformerIACTR(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, q_feats, q_poss, q_ref_coors=None):
+    def forward(self,
+                srcs,
+                masks,
+                pos_embeds,
+                q_feats,
+                q_poss,
+                q_ref_coors=None):
         # prepare input for encoder
         batch_size = srcs[0].shape[0]
         src_flatten = []
@@ -338,6 +359,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
         super().__init__()
 
         # self attention
+        self.d_model = d_model
         self.self_attn = MSDeformAttn(d_model, q_model, n_levels, n_heads,
                                       n_points)
         self.dropout1 = nn.Dropout(dropout)
@@ -385,10 +407,24 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
 class DeformableTransformerEncoder(nn.Module):
 
-    def __init__(self, encoder_layer, num_layers):
+    def __init__(self,
+                 encoder_layer,
+                 num_layers,
+                 model_name='ACTR',
+                 lt_cfg=None):
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
+        self.model_name = model_name
+        if model_name == 'ACTRv2':
+            self.lidar_attns = _get_clones(
+                LocalTransformer(
+                    lt_cfg.npoint,
+                    lt_cfg.radius,
+                    lt_cfg.nsample,
+                    encoder_layer.d_model,
+                    encoder_layer.d_model,
+                    num_layers=lt_cfg.num_layers), num_layers)
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):
@@ -419,7 +455,8 @@ class DeformableTransformerEncoder(nn.Module):
                 padding_mask=None,
                 q_feat=None,
                 q_pos=None,
-                q_reference_points=None):
+                q_reference_points=None,
+                q_lidar_grid=None):
         output = src
         if q_reference_points is None:
             # for IACTR
@@ -429,7 +466,10 @@ class DeformableTransformerEncoder(nn.Module):
             # for ACTR
             reference_points = q_reference_points[:, :,
                                                   None] * valid_ratios[:, None]
-        for _, layer in enumerate(self.layers):
+        for idx, layer in enumerate(self.layers):
+            if self.model_name == 'ACTRv2':
+                q_feat = self.lidar_attns[idx](q_lidar_grid,
+                                               q_feat.permute(0, 2, 1))
             q_feat = layer(
                 output,
                 pos,
@@ -458,8 +498,8 @@ def _get_activation_fn(activation):
     raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 
-def build_deformable_transformer(args, model_name='ACTR'):
-    if model_name == 'ACTR':
+def build_deformable_transformer(args, model_name='ACTR', lt_cfg=None):
+    if 'ACTR' in model_name and 'IACTR' not in model_name:
         model_class = DeformableTransformerACTR
     elif 'IACTR' in model_name:
         model_class = DeformableTransformerIACTR
@@ -476,5 +516,5 @@ def build_deformable_transformer(args, model_name='ACTR'):
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,
         two_stage_num_proposals=args.num_queries,
-        model_name=model_name
-    )
+        model_name=model_name,
+        lt_cfg=lt_cfg)
