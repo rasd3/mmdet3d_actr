@@ -11,7 +11,6 @@ from .mvx_two_stage import MVXTwoStageDetector
 @DETECTORS.register_module()
 class MVXFasterRCNN(MVXTwoStageDetector):
     """Multi-modality VoxelNet using Faster R-CNN."""
-
     def __init__(self, **kwargs):
         super(MVXFasterRCNN, self).__init__(**kwargs)
 
@@ -19,7 +18,6 @@ class MVXFasterRCNN(MVXTwoStageDetector):
 @DETECTORS.register_module()
 class DynamicMVXFasterRCNN(MVXTwoStageDetector):
     """Multi-modality VoxelNet using Faster R-CNN and dynamic voxelization."""
-
     def __init__(self, img_pipeline_freeze=True, **kwargs):
         super(DynamicMVXFasterRCNN, self).__init__(**kwargs)
         self.img_pipeline_freeze = img_pipeline_freeze
@@ -59,8 +57,9 @@ class DynamicMVXFasterRCNN(MVXTwoStageDetector):
         voxel_features, feature_coors = self.pts_voxel_encoder(
             voxels, coors, points, img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x = self.pts_middle_encoder(voxel_features, feature_coors, batch_size,
-                                    img_feats, img_metas, points)
+        x, img_feats = self.pts_middle_encoder(voxel_features, feature_coors,
+                                               batch_size, img_feats,
+                                               img_metas, points)
         x = self.pts_backbone(x)
         if self.with_pts_neck:
             x = self.pts_neck(x)

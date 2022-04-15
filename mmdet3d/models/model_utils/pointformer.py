@@ -9,7 +9,6 @@ from mmdet.models import BACKBONES
 
 
 class TransformerEncoderLayerPreNorm(nn.Module):
-
     def __init__(self,
                  d_model,
                  nhead,
@@ -37,12 +36,11 @@ class TransformerEncoderLayerPreNorm(nn.Module):
     def forward(self, src, src_mask=None, src_key_padding_mask=None):
 
         src = self.norm1(src)
-        src2, mask = self.self_attn(
-            src,
-            src,
-            src,
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask)
+        src2, mask = self.self_attn(src,
+                                    src,
+                                    src,
+                                    attn_mask=src_mask,
+                                    key_padding_mask=src_key_padding_mask)
         src = src + self.dropout1(src2)
 
         src = self.norm2(src)
@@ -53,7 +51,6 @@ class TransformerEncoderLayerPreNorm(nn.Module):
 
 
 class TransformerDecoderLayerPreNorm(nn.Module):
-
     def __init__(self,
                  d_model,
                  nc_mem,
@@ -64,8 +61,9 @@ class TransformerDecoderLayerPreNorm(nn.Module):
 
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout)
+        self.multihead_attn = nn.MultiheadAttention(d_model,
+                                                    nhead,
+                                                    dropout=dropout)
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout, inplace=True)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -95,12 +93,11 @@ class TransformerDecoderLayerPreNorm(nn.Module):
                 memory_key_padding_mask=None):
 
         tgt = self.norm1(tgt)
-        tgt2 = self.self_attn(
-            tgt,
-            tgt,
-            tgt,
-            attn_mask=tgt_mask,
-            key_padding_mask=tgt_key_padding_mask)[0]
+        tgt2 = self.self_attn(tgt,
+                              tgt,
+                              tgt,
+                              attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout1(tgt2)
 
         tgt = self.norm2(tgt)
@@ -120,7 +117,6 @@ class TransformerDecoderLayerPreNorm(nn.Module):
 
 
 class LinformerEncoderLayer(nn.Module):
-
     def __init__(self,
                  src_len,
                  ratio,
@@ -157,12 +153,11 @@ class LinformerEncoderLayer(nn.Module):
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None):
 
-        src2 = self.self_attn(
-            src,
-            src,
-            src,
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask)[0]
+        src2 = self.self_attn(src,
+                              src,
+                              src,
+                              attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -174,7 +169,6 @@ class LinformerEncoderLayer(nn.Module):
 
 
 class LinformerDecoderLayer(nn.Module):
-
     def __init__(self,
                  tgt_len,
                  mem_len,
@@ -187,8 +181,9 @@ class LinformerDecoderLayer(nn.Module):
 
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout)
+        self.multihead_attn = nn.MultiheadAttention(d_model,
+                                                    nhead,
+                                                    dropout=dropout)
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout, inplace=True)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -231,24 +226,22 @@ class LinformerDecoderLayer(nn.Module):
         tgt_temp = tgt.transpose(0, 1)
         key = torch.matmul(self.linear_k1, tgt_temp).transpose(0, 1)
         value = torch.matmul(self.linear_v1, tgt_temp).transpose(0, 1)
-        tgt2 = self.self_attn(
-            tgt,
-            key,
-            value,
-            attn_mask=tgt_mask,
-            key_padding_mask=tgt_key_padding_mask)[0]
+        tgt2 = self.self_attn(tgt,
+                              key,
+                              value,
+                              attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask)[0]
 
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
         memory_temp = memory.transpose(0, 1)
         key = torch.matmul(self.linear_k2, memory_temp).transpose(0, 1)
         value = torch.matmul(self.linear_v2, memory_temp).transpose(0, 1)
-        tgt2 = self.multihead_attn(
-            tgt,
-            key,
-            value,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask)[0]
+        tgt2 = self.multihead_attn(tgt,
+                                   key,
+                                   value,
+                                   attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask)[0]
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -260,7 +253,6 @@ class LinformerDecoderLayer(nn.Module):
 class LocalTransformer(nn.Module):
     """Fix from LocalTransformer (Pointformer)
     """
-
     def __init__(self,
                  npoint,
                  radius,
@@ -272,7 +264,9 @@ class LocalTransformer(nn.Module):
                  norm_cfg=dict(type='BN2d'),
                  ratio=1,
                  drop=0.0,
-                 prenorm=True):
+                 prenorm=True,
+                 attn_feat_agg_method='unique',
+                 feat_agg_method='replace'):
         super().__init__()
 
         self.npoint = npoint
@@ -282,41 +276,46 @@ class LocalTransformer(nn.Module):
         self.nc_out = dim_out
 
         self.sampler = Points_Sampler([self.npoint], ['D-FPS'])
-        self.grouper = QueryAndGroup(
-            self.radius,
-            self.nsample,
-            use_xyz=False,
-            return_grouped_xyz=True,
-            return_grouped_idx=True,
-            normalize_xyz=False)
+        self.grouper = QueryAndGroup(self.radius,
+                                     self.nsample,
+                                     use_xyz=False,
+                                     return_grouped_xyz=True,
+                                     return_grouped_idx=True,
+                                     normalize_xyz=False)
 
         self.pe = nn.Sequential(
             ConvModule(3, self.nc_in // 2, 1, norm_cfg=norm_cfg),
-            ConvModule(
-                self.nc_in // 2, self.nc_in, 1, act_cfg=None, norm_cfg=None))
+            ConvModule(self.nc_in // 2,
+                       self.nc_in,
+                       1,
+                       act_cfg=None,
+                       norm_cfg=None))
 
         BSC_Encoder = TransformerEncoderLayerPreNorm if prenorm else nn.TransformerEncoderLayer
 
         self.chunk = nn.TransformerEncoder(
-            BSC_Encoder(
-                d_model=self.nc_in,
-                dim_feedforward=2 * self.nc_in,
-                dropout=drop,
-                nhead=nhead) if ratio == 1 else LinformerEncoderLayer(
-                    src_len=nsample,
-                    ratio=ratio,
-                    d_model=self.nc_in,
-                    nhead=nhead,
-                    dropout=drop,
-                    dim_feedforward=2 * self.nc_in),
+            BSC_Encoder(d_model=self.nc_in,
+                        dim_feedforward=2 * self.nc_in,
+                        dropout=drop,
+                        nhead=nhead) if ratio == 1 else LinformerEncoderLayer(
+                            src_len=nsample,
+                            ratio=ratio,
+                            d_model=self.nc_in,
+                            nhead=nhead,
+                            dropout=drop,
+                            dim_feedforward=2 * self.nc_in),
             num_layers=num_layers)
 
-    def unique(self, ori_feats, feats, idxs):
+        # add
+        self.attn_feat_agg_method = attn_feat_agg_method
+        self.feat_agg_method = feat_agg_method
 
+    def scatter(self, attn_features, feats, idxs):
         def unique_idx(x, dim=-1):
             unique, inverse = torch.unique(x, return_inverse=True, dim=dim)
-            perm = torch.arange(
-                inverse.size(dim), dtype=inverse.dtype, device=inverse.device)
+            perm = torch.arange(inverse.size(dim),
+                                dtype=inverse.dtype,
+                                device=inverse.device)
             inverse, perm = inverse.flip([dim]), perm.flip([dim])
             return unique.to(torch.long), inverse.new_empty(
                 unique.size(dim)).scatter_(dim, inverse, perm).to(torch.long)
@@ -325,8 +324,19 @@ class LocalTransformer(nn.Module):
         for b, (idx, feat) in enumerate(zip(idxs, feats)):
             idx_f = idx.reshape(-1)
             feat_f = feat.reshape(C, -1)
-            idx_u, idx_i = unique_idx(idx_f)
-            ori_feats[b][:, idx_u] = feat_f[:, idx_i]
+
+            if self.attn_feat_agg_method == 'unique':
+                idx_u, idx_i = unique_idx(idx_f)
+                attn_features[b][:, idx_u] = feat_f[:, idx_i]
+            elif self.attn_feat_agg_method == 'sum':
+                #  attn_features[b].index_add_(1, idx_f.to(torch.long), feat_f.clone())
+                attn_features[b] = torch.index_add(attn_features[b], 1,
+                                                   idx_f.to(torch.long),
+                                                   feat_f.clone())
+                attn_features[b] = nn.functional.normalize(
+                    attn_features[b].clone(), dim=1)
+            else:
+                NotImplementedError
 
     def forward(self, xyz, features):
         xyz_flipped = xyz.transpose(1, 2).contiguous()
@@ -345,13 +355,20 @@ class LocalTransformer(nn.Module):
                                                     2, 0, 1)
         transformed_feats = self.chunk(input_features).permute(
             1, 2, 0).reshape(B, np, D, ns).transpose(1, 2)
-        self.unique(features, transformed_feats, group_idx)
+
+        if self.feat_agg_method == 'replace':
+            self.scatter(features, transformed_feats, group_idx)
+        elif self.feat_agg_method == 'sum':
+            attn_features = torch.zeros_like(features)
+            self.scatter(attn_features, transformed_feats, group_idx)
+            features = features + attn_features
+        else:
+            NotImplementedError
 
         return features.permute(0, 2, 1)
 
 
 class GlobalTransformer(nn.Module):
-
     def __init__(self,
                  dim_feature,
                  dim_out,
@@ -371,27 +388,32 @@ class GlobalTransformer(nn.Module):
 
         self.pe = nn.Sequential(
             ConvModule(3, self.nc_in // 2, 1, norm_cfg=norm_cfg),
-            ConvModule(
-                self.nc_in // 2, self.nc_in, 1, act_cfg=None, norm_cfg=None))
+            ConvModule(self.nc_in // 2,
+                       self.nc_in,
+                       1,
+                       act_cfg=None,
+                       norm_cfg=None))
 
         BSC_Encoder = TransformerEncoderLayerPreNorm if prenorm else nn.TransformerEncoderLayer
 
         self.chunk = nn.TransformerEncoder(
-            BSC_Encoder(
-                d_model=self.nc_in,
-                dim_feedforward=2 * self.nc_in,
-                dropout=drop,
-                nhead=nhead) if ratio == 1 else LinformerEncoderLayer(
-                    src_len=src_pts,
-                    ratio=ratio,
-                    d_model=self.nc_in,
-                    nhead=nhead,
-                    dropout=drop,
-                    dim_feedforward=2 * self.nc_in),
+            BSC_Encoder(d_model=self.nc_in,
+                        dim_feedforward=2 * self.nc_in,
+                        dropout=drop,
+                        nhead=nhead) if ratio == 1 else LinformerEncoderLayer(
+                            src_len=src_pts,
+                            ratio=ratio,
+                            d_model=self.nc_in,
+                            nhead=nhead,
+                            dropout=drop,
+                            dim_feedforward=2 * self.nc_in),
             num_layers=num_layers)
 
-        self.fc = ConvModule(
-            self.nc_in, self.nc_out, 1, norm_cfg=None, act_cfg=None)
+        self.fc = ConvModule(self.nc_in,
+                             self.nc_out,
+                             1,
+                             norm_cfg=None,
+                             act_cfg=None)
 
     def forward(self, xyz, features):
 
@@ -405,7 +427,6 @@ class GlobalTransformer(nn.Module):
 
 
 class LocalGlobalTransformer(nn.Module):
-
     def __init__(self,
                  dim_in,
                  dim_out,
@@ -426,29 +447,34 @@ class LocalGlobalTransformer(nn.Module):
         self.nhead = nhead
         self.pe = nn.Sequential(
             ConvModule(3, self.nc_in // 2, 1, norm_cfg=norm_cfg),
-            ConvModule(
-                self.nc_in // 2, self.nc_in, 1, act_cfg=None, norm_cfg=None))
+            ConvModule(self.nc_in // 2,
+                       self.nc_in,
+                       1,
+                       act_cfg=None,
+                       norm_cfg=None))
 
         BSC_Decoder = TransformerDecoderLayerPreNorm if prenorm else nn.TransformerDecoderLayer
 
         self.chunk = nn.TransformerDecoder(
-            BSC_Decoder(
-                d_model=self.nc_in,
-                dim_feedforward=2 * self.nc_in,
-                dropout=drop,
-                nhead=nhead,
-                nc_mem=dim_feature) if ratio == 1 else LinformerDecoderLayer(
-                    tgt_len=tgt_pts,
-                    mem_len=mem_pts,
-                    ratio=ratio,
-                    d_model=self.nc_in,
-                    nhead=nhead,
-                    dropout=drop,
-                    dim_feedforward=2 * self.nc_in),
+            BSC_Decoder(d_model=self.nc_in,
+                        dim_feedforward=2 * self.nc_in,
+                        dropout=drop,
+                        nhead=nhead,
+                        nc_mem=dim_feature) if ratio == 1 else
+            LinformerDecoderLayer(tgt_len=tgt_pts,
+                                  mem_len=mem_pts,
+                                  ratio=ratio,
+                                  d_model=self.nc_in,
+                                  nhead=nhead,
+                                  dropout=drop,
+                                  dim_feedforward=2 * self.nc_in),
             num_layers=num_layers)
 
-        self.fc = ConvModule(
-            self.nc_in, self.nc_out, 1, norm_cfg=None, act_cfg=None)
+        self.fc = ConvModule(self.nc_in,
+                             self.nc_out,
+                             1,
+                             norm_cfg=None,
+                             act_cfg=None)
 
     def forward(self, xyz_tgt, xyz_mem, features_tgt, features_mem):
         xyz_tgt_flipped = xyz_tgt.transpose(1, 2).unsqueeze(-1)
@@ -462,15 +488,14 @@ class LocalGlobalTransformer(nn.Module):
         mem = mem.squeeze(-1).permute(2, 0, 1)
         tgt = tgt.squeeze(-1).permute(2, 0, 1)
 
-        transformed_feats = self.chunk(
-            tgt, mem, memory_mask=mem_mask).permute(1, 2, 0)
+        transformed_feats = self.chunk(tgt, mem,
+                                       memory_mask=mem_mask).permute(1, 2, 0)
         output_features = self.fc(transformed_feats.unsqueeze(-1)).squeeze(-1)
 
         return output_features
 
 
 class BasicDownBlock(nn.Module):
-
     def __init__(self,
                  npoint,
                  radius,
@@ -522,7 +547,6 @@ class BasicDownBlock(nn.Module):
 
 @BACKBONES.register_module()
 class Pointformer(nn.Module):
-
     def init_weights(self, pretrained=None):
         pass
 
@@ -619,7 +643,8 @@ class Pointformer(nn.Module):
             fp_xyz.append(sa_xyz[self.num_sa - i - 1])
             fp_indices.append(sa_indices[self.num_sa - i - 1])
 
-        ret = dict(
-            fp_xyz=fp_xyz, fp_features=fp_features, fp_indices=fp_indices)
+        ret = dict(fp_xyz=fp_xyz,
+                   fp_features=fp_features,
+                   fp_indices=fp_indices)
 
         return ret

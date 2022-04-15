@@ -424,7 +424,10 @@ class DeformableTransformerEncoder(nn.Module):
                     lt_cfg.nsample,
                     encoder_layer.d_model,
                     encoder_layer.d_model,
-                    num_layers=lt_cfg.num_layers), num_layers)
+                    num_layers=lt_cfg.num_layers,
+                    attn_feat_agg_method=lt_cfg.attn_feat_agg_method,
+                    feat_agg_method=lt_cfg.feat_agg_method
+                ), num_layers)
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):

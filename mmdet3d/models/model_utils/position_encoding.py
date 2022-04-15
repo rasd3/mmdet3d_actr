@@ -78,7 +78,7 @@ class PositionEmbeddingSineSparse(PositionEmbeddingSine):
             y_embed *= self.scale
             x_embed *= self.scale
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=depth.device)
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=coor.device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
 
         pos_x = x_embed[:, :, None] / dim_t
